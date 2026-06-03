@@ -1,0 +1,13 @@
+.build/
+dist/
+.DS_Store
+*.xcuserstate
+DerivedData/
+docs/
+.agents/
+.claude/
+.codex/
+.cursor/
+.gemini/
+.kiro/
+.opencode/
