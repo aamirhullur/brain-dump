@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 struct MemoryInletView: View {
     let model: MemoryInletModel
     let fragmentStore: FragmentStore

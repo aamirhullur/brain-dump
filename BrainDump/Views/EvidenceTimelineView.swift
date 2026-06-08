@@ -1,5 +1,6 @@
 import SwiftUI
 
+@MainActor
 struct EvidenceTimelineView: View {
     @Bindable var fragmentStore: FragmentStore
     @Binding var searchText: String
