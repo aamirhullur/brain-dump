@@ -19,6 +19,20 @@ struct GlobalShortcutServiceTests {
     }
 
     @Test
+    func rapidTripleGravePressTriggersShortcutOnce() {
+        var triggerCount = 0
+        let service = GlobalShortcutService {
+            triggerCount += 1
+        }
+        let firstPress = Date()
+
+        #expect(service.handlePotentialShortcut(keyCode: 50, modifierFlags: [], timestamp: firstPress) == false)
+        #expect(service.handlePotentialShortcut(keyCode: 50, modifierFlags: [], timestamp: firstPress.addingTimeInterval(0.2)) == true)
+        #expect(service.handlePotentialShortcut(keyCode: 50, modifierFlags: [], timestamp: firstPress.addingTimeInterval(0.3)) == false)
+        #expect(triggerCount == 1)
+    }
+
+    @Test
     func slowGravePressesDoNotTriggerShortcut() {
         var triggerCount = 0
         let service = GlobalShortcutService {

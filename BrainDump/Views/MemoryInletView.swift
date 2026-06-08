@@ -64,11 +64,8 @@ struct MemoryInletView: View {
                 }
             }
             .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: nil) { providers in
-                processingCount += 1
-                lastSavedTitle = "Dropped fragment"
-                feedback = "Queued drop"
-                model.collapse()
-                return true
+                rejectUnsupportedDrop()
+                return false
             }
     }
 
@@ -181,17 +178,16 @@ struct MemoryInletView: View {
                         .font(.title3)
                         .foregroundStyle(.blue)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Region capture will start from here.")
+                        Text("Screenshot capture is not available yet.")
                             .font(.callout.weight(.medium))
-                        Text("For now this queues the screenshot capture path.")
+                        Text("Use text, paste, or URL capture until screenshot evidence is wired to storage.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Queue") {
-                        queuePlaceholderCapture("Screenshot region")
-                    }
+                    Button("Unavailable") {}
                     .buttonStyle(.borderedProminent)
+                    .disabled(true)
                 }
                 .padding(12)
                 .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
@@ -335,14 +331,10 @@ struct MemoryInletView: View {
         }
     }
 
-    private func queuePlaceholderCapture(_ title: String) {
-        lastSavedTitle = title
-        processingCount += 1
-        feedback = "Capture path queued"
-        savedConfirmation = "Queued"
-        model.collapse()
-        clearSavedConfirmationSoon()
-        scheduleProgressCompletion()
+    private func rejectUnsupportedDrop() {
+        errorMessage = "Drop capture is not available yet."
+        feedback = "Drop was not saved"
+        model.wake()
     }
 
     private func collapse() {
