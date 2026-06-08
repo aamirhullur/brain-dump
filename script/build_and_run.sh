@@ -2,6 +2,10 @@
 set -euo pipefail
 
 MODE="${1:-run}"
+if [ "$#" -gt 0 ]; then
+  shift
+fi
+APP_ARGS=("$@")
 APP_NAME="BrainDump"
 BUNDLE_ID="com.aamirhullur.BrainDump"
 MIN_SYSTEM_VERSION="14.0"
@@ -52,7 +56,11 @@ cat >"$INFO_PLIST" <<PLIST
 PLIST
 
 open_app() {
-  /usr/bin/open -n "$APP_BUNDLE"
+  if [ "${#APP_ARGS[@]}" -gt 0 ]; then
+    /usr/bin/open -n "$APP_BUNDLE" --args "${APP_ARGS[@]}"
+  else
+    /usr/bin/open -n "$APP_BUNDLE"
+  fi
 }
 
 case "$MODE" in
@@ -60,7 +68,7 @@ case "$MODE" in
     open_app
     ;;
   --debug|debug)
-    lldb -- "$APP_BINARY"
+    lldb -- "$APP_BINARY" "${APP_ARGS[@]}"
     ;;
   --logs|logs)
     open_app
@@ -76,7 +84,7 @@ case "$MODE" in
     pgrep -x "$APP_NAME" >/dev/null
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify] [app args...]" >&2
     exit 2
     ;;
 esac

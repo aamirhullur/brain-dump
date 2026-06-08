@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  macos:
+    name: macOS Build and Test
+    runs-on: macos-15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Show Swift version
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Check diff whitespace
+        run: |
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            git diff --check HEAD^
+          else
+            git diff --check
+          fi
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
