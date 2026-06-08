@@ -2,27 +2,66 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var appStore: AppStore
+    @State private var selectedSection: AppSection = .allEvidence
+    @State private var searchText = ""
+    @State private var isSidebarVisible = true
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(fragmentStore: appStore.fragmentStore)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 320)
-        } detail: {
+        HStack(spacing: 0) {
+            if isSidebarVisible {
+                SidebarView(
+                    selectedSection: $selectedSection,
+                    fragmentCount: appStore.fragmentStore.fragments.count
+                )
+                .frame(width: 260)
+                .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+
+            EvidenceTimelineView(
+                fragmentStore: appStore.fragmentStore,
+                searchText: $searchText
+            )
+            .frame(minWidth: 430, idealWidth: 500, maxWidth: 560)
+
             if let fragment = appStore.fragmentStore.selectedFragment {
                 FragmentDetailView(fragment: fragment, fragmentStore: appStore.fragmentStore)
+                    .frame(minWidth: 440, maxWidth: .infinity)
             } else {
-                ContentUnavailableView("No Fragments", systemImage: "tray", description: Text("Use Option-Space to capture a text fragment or URL."))
+                EmptyMemoryView {
+                    appStore.showMemoryInlet()
+                }
+                .frame(minWidth: 440, maxWidth: .infinity)
             }
         }
-        .navigationSplitViewStyle(.balanced)
+        .background(DesignTokens.primaryPurple)
+        .toolbarBackground(.visible, for: .windowToolbar)
+        .toolbarBackground(DesignTokens.primaryPurple, for: .windowToolbar)
         .toolbar {
-            ToolbarItem {
+            ToolbarItem(placement: .navigation) {
                 Button {
-                    appStore.showCapturePalette()
+                    withAnimation(.snappy(duration: 0.18)) {
+                        isSidebarVisible.toggle()
+                    }
+                } label: {
+                    Label("Toggle Sidebar", systemImage: "sidebar.left")
+                }
+                .help(isSidebarVisible ? "Hide Sidebar" : "Show Sidebar")
+            }
+
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    appStore.showMemoryInlet()
                 } label: {
                     Label("Capture", systemImage: "plus")
                 }
                 .help("Capture Fragment")
+
+                Button {
+                } label: {
+                    Label("Bookmark", systemImage: "bookmark")
+                }
+                .disabled(appStore.fragmentStore.selectedFragment == nil)
+                .help("Bookmark")
             }
         }
         .alert("Startup Error", isPresented: Binding(
@@ -33,5 +72,38 @@ struct ContentView: View {
         } message: {
             Text(appStore.startupError ?? "")
         }
+    }
+}
+
+private struct EmptyMemoryView: View {
+    let onCapture: () -> Void
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.system(size: 34, weight: .regular))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 7) {
+                Text("Start with evidence")
+                    .font(.title3.weight(.semibold))
+                Text("Capture a note, link, screenshot, or file. Brain Dump keeps the original evidence and interprets it later.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 420)
+            }
+
+            Button {
+                onCapture()
+            } label: {
+                Label("Open Memory Inlet", systemImage: "plus")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.background)
     }
 }

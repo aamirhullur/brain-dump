@@ -1,65 +1,79 @@
 import AppKit
-import Carbon
 
 @MainActor
 final class GlobalShortcutService {
-    private var hotKeyRef: EventHotKeyRef?
-    private var eventHandler: EventHandlerRef?
-    private let onShortcut: () -> Void
+    static let shortcutDescription = "Press ` twice"
 
-    init(onShortcut: @escaping () -> Void) {
+    private var localMonitor: Any?
+    private var globalMonitor: Any?
+    private var lastGravePressDate: Date?
+    private let onShortcut: () -> Void
+    private let doublePressInterval: TimeInterval
+
+    init(doublePressInterval: TimeInterval = 0.45, onShortcut: @escaping () -> Void) {
+        self.doublePressInterval = doublePressInterval
         self.onShortcut = onShortcut
     }
 
     deinit {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
+        if let localMonitor {
+            NSEvent.removeMonitor(localMonitor)
         }
-        if let eventHandler {
-            RemoveEventHandler(eventHandler)
+        if let globalMonitor {
+            NSEvent.removeMonitor(globalMonitor)
         }
     }
 
     func register() {
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        let selfPointer = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        guard localMonitor == nil, globalMonitor == nil else { return }
 
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, event, userData in
-                guard let userData else { return noErr }
-                let service = Unmanaged<GlobalShortcutService>.fromOpaque(userData).takeUnretainedValue()
-                var hotKeyID = EventHotKeyID()
-                GetEventParameter(
-                    event,
-                    EventParamName(kEventParamDirectObject),
-                    EventParamType(typeEventHotKeyID),
-                    nil,
-                    MemoryLayout<EventHotKeyID>.size,
-                    nil,
-                    &hotKeyID
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            if handlePotentialShortcut(keyCode: event.keyCode, modifierFlags: event.modifierFlags, timestamp: Date()) {
+                return nil
+            }
+            return event
+        }
+
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return }
+            Task { @MainActor in
+                _ = self.handlePotentialShortcut(
+                    keyCode: event.keyCode,
+                    modifierFlags: event.modifierFlags,
+                    timestamp: Date()
                 )
-                if hotKeyID.id == 1 {
-                    Task { @MainActor in
-                        service.onShortcut()
-                    }
-                }
-                return noErr
-            },
-            1,
-            &eventType,
-            selfPointer,
-            &eventHandler
-        )
+            }
+        }
+    }
 
-        var hotKeyID = EventHotKeyID(signature: OSType(0x42445250), id: 1)
-        RegisterEventHotKey(
-            UInt32(kVK_Space),
-            UInt32(optionKey),
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
-        )
+    @discardableResult
+    func handlePotentialShortcut(keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags, timestamp: Date) -> Bool {
+        guard keyCode == 50, allowsShortcutModifiers(modifierFlags) else {
+            lastGravePressDate = nil
+            return false
+        }
+
+        defer {
+            lastGravePressDate = timestamp
+        }
+
+        guard let lastGravePressDate else {
+            return false
+        }
+
+        let elapsed = timestamp.timeIntervalSince(lastGravePressDate)
+        if elapsed <= doublePressInterval {
+            self.lastGravePressDate = nil
+            onShortcut()
+            return true
+        }
+
+        return false
+    }
+
+    private func allowsShortcutModifiers(_ modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        let disallowed = modifierFlags.intersection([.command, .control, .option])
+        return disallowed.isEmpty
     }
 }

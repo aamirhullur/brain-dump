@@ -4,9 +4,9 @@ import SwiftUI
 struct BrainDumpApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var appStore: AppStore
-    @State private var showPaletteAtLaunch: Bool
+    @State private var showMemoryInletAtLaunch: Bool
     @State private var shortcutService: GlobalShortcutService?
-    @State private var capturePaletteController: CapturePaletteController?
+    @State private var memoryInletController: MemoryInletController?
 
     init() {
         let store = AppStore()
@@ -20,35 +20,35 @@ struct BrainDumpApp: App {
             }
         }
         _appStore = State(initialValue: store)
-        _showPaletteAtLaunch = State(initialValue: CommandLine.arguments.contains("--show-palette"))
+        _showMemoryInletAtLaunch = State(initialValue: Self.shouldShowMemoryInletAtLaunch())
     }
 
     var body: some Scene {
         WindowGroup("Brain Dump", id: "main") {
             ContentView(appStore: appStore)
-                .frame(minWidth: 980, minHeight: 600)
+                .frame(minWidth: 1180, minHeight: 680)
                 .task {
                     configurePlatformServices()
-                    if showPaletteAtLaunch {
-                        showPaletteAtLaunch = false
-                        appStore.showCapturePalette()
+                    if showMemoryInletAtLaunch {
+                        showMemoryInletAtLaunch = false
+                        appStore.showMemoryInlet()
                     }
                 }
-                .onChange(of: appStore.isCapturePalettePresented) { _, isPresented in
-                    if isPresented {
-                        capturePaletteController?.show()
-                    } else {
-                        capturePaletteController?.hide()
+                .onChange(of: appStore.isMemoryInletPresented) { _, isPresented in
+                    if !isPresented {
+                        memoryInletController?.hide()
                     }
+                }
+                .onChange(of: appStore.memoryInletRequestCount) { _, _ in
+                    memoryInletController?.show()
                 }
         }
-        .defaultSize(width: 1080, height: 680)
+        .defaultSize(width: 1280, height: 760)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Capture Fragment") {
-                    appStore.showCapturePalette()
+                    appStore.showMemoryInlet()
                 }
-                .keyboardShortcut(.space, modifiers: [.option])
             }
         }
 
@@ -60,14 +60,18 @@ struct BrainDumpApp: App {
     @MainActor
     private func configurePlatformServices() {
         guard shortcutService == nil else { return }
-        let paletteController = CapturePaletteController(appStore: appStore)
-        capturePaletteController = paletteController
+        let inletController = MemoryInletController(appStore: appStore)
+        memoryInletController = inletController
 
         let shortcutService = GlobalShortcutService {
-            appStore.showCapturePalette()
+            appStore.showMemoryInlet()
         }
         shortcutService.register()
         self.shortcutService = shortcutService
+    }
+
+    private static func shouldShowMemoryInletAtLaunch() -> Bool {
+        CommandLine.arguments.contains("--show-memory-inlet")
     }
 
     private static func smokeCaptureArgument() -> String? {

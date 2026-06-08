@@ -25,8 +25,8 @@ struct CapturePersistenceTests {
         let firstDatabase = try Database(path: storage.databaseURL.path)
         try firstDatabase.migrate()
         let firstStore = FragmentStore(database: firstDatabase, blobStore: BlobStore(root: storage.blobsURL))
-        try firstStore.capture(rawInput: "A local-first native Mac capture palette note")
-        try firstStore.capture(rawInput: "https://example.com/brain-dump")
+        try firstStore.capture(rawInput: "A local-first native Mac memory inlet note")
+        try firstStore.capture(rawInput: "example.com/brain-dump")
 
         #expect(firstStore.fragments.count == 2)
         #expect(firstStore.fragments.map(\.sourceType).contains(.text))
@@ -45,9 +45,15 @@ struct CapturePersistenceTests {
         let jobCount = try persistedDatabase.query("SELECT COUNT(*) FROM jobs;") {
             Int(columnInt64($0, at: 0))
         }.first
+        let sourceURLs = try persistedDatabase.query(
+            "SELECT source_url FROM assets WHERE kind = 'url';"
+        ) { statement in
+            columnOptionalText(statement, at: 0)
+        }
 
         #expect(assetCount == 2)
         #expect(jobCount == 4)
+        #expect(sourceURLs == ["https://example.com/brain-dump"])
 
         let blobFiles = try FileManager.default.subpathsOfDirectory(atPath: storage.blobsURL.path)
             .filter { $0.hasSuffix(".txt") }

@@ -19,7 +19,7 @@ struct SettingsView: View {
             }
 
             Section("Capture") {
-                LabeledContent("Global Shortcut", value: "Option-Space")
+                LabeledContent("Global Shortcut", value: GlobalShortcutService.shortcutDescription)
                 LabeledContent("Supported Now", value: "Text, URLs")
             }
         }

@@ -8,7 +8,8 @@ final class AppStore {
     let fragmentStore: FragmentStore
     private let database: Database
 
-    var isCapturePalettePresented = false
+    var isMemoryInletPresented = false
+    var memoryInletRequestCount = 0
     var startupError: String?
 
     init() {
@@ -38,11 +39,12 @@ final class AppStore {
         }
     }
 
-    func showCapturePalette() {
-        isCapturePalettePresented = true
+    func showMemoryInlet() {
+        isMemoryInletPresented = true
+        memoryInletRequestCount += 1
     }
 
-    func hideCapturePalette() {
-        isCapturePalettePresented = false
+    func hideMemoryInlet() {
+        isMemoryInletPresented = false
     }
 }
