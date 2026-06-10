@@ -59,7 +59,7 @@ struct EvidenceTimelineView: View {
             Task { @MainActor in
                 let images = await ImageIngest.images(from: providers)
                 for image in images {
-                    try? fragmentStore.captureImage(
+                    _ = try? fragmentStore.captureImage(
                         image.data,
                         sourceType: .image,
                         originalFilename: image.originalFilename,
@@ -171,7 +171,7 @@ private struct SourceThumbnail: View {
 
     var body: some View {
         ZStack {
-            if let thumbnailURL, let image = NSImage(contentsOf: thumbnailURL) {
+            if let thumbnailURL, let image = ImageCache.image(at: thumbnailURL) {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)

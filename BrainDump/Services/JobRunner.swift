@@ -1,10 +1,12 @@
 import Foundation
+import GRDB
 
 @MainActor
 final class JobRunner {
     static let handledTypes = ["generate_thumbnail", "ocr_image"]
+    static let handledTypesJSON = String(data: try! JSONEncoder().encode(handledTypes), encoding: .utf8)!
 
-    private let database: Database
+    private let database: AppDatabase
     private let thumbnailsURL: URL
     private let onFragmentsChanged: () -> Void
     private var loopTask: Task<Void, Never>?
@@ -13,7 +15,7 @@ final class JobRunner {
     private var retryWakeTask: Task<Void, Never>?
 
     init(
-        database: Database,
+        database: AppDatabase,
         thumbnailsURL: URL,
         onFragmentsChanged: @escaping () -> Void = {}
     ) {
@@ -54,6 +56,15 @@ final class JobRunner {
         wake()
     }
 
+    @discardableResult
+    func processAllPending() async -> Int {
+        var processed = 0
+        while await processNextJob() {
+            processed += 1
+        }
+        return processed
+    }
+
     private func wake() {
         if let waiter {
             self.waiter = nil
@@ -90,27 +101,18 @@ final class JobRunner {
     }
 
     private func nextRetryDelay() -> TimeInterval? {
-        let placeholders = Self.handledTypes.map { _ in "?" }.joined(separator: ", ")
-        let rows = try? database.query(
-            "SELECT MIN(available_at) FROM jobs WHERE status = 'pending' AND type IN (\(placeholders));",
-            bind: { statement in
-                for (index, type) in Self.handledTypes.enumerated() {
-                    bindText(type, to: statement, at: Int32(index + 1))
-                }
-            },
-            map: { columnOptionalText($0, at: 0) }
-        )
-        guard let availableAt = rows?.first ?? nil else { return nil }
-        return max(0.1, DateFormatting.date(from: availableAt).timeIntervalSinceNow)
-    }
-
-    @discardableResult
-    func processAllPending() async -> Int {
-        var processed = 0
-        while await processNextJob() {
-            processed += 1
+        let availableAt = try? database.read { db in
+            try String.fetchOne(
+                db,
+                sql: """
+                SELECT MIN(available_at) FROM jobs
+                WHERE status = 'pending' AND type IN (SELECT value FROM json_each(:types))
+                """,
+                arguments: ["types": Self.handledTypesJSON]
+            )
         }
-        return processed
+        guard let earliest = availableAt ?? nil else { return nil }
+        return max(0.1, DateFormatting.date(from: earliest).timeIntervalSinceNow)
     }
 
     private func processNextJob() async -> Bool {
@@ -179,137 +181,130 @@ final class JobRunner {
 
     private func claimNextJob() -> ClaimedJob? {
         let now = DateFormatting.string(from: Date())
-        let placeholders = Self.handledTypes.map { _ in "?" }.joined(separator: ", ")
-        let rows = try? database.query(
-            """
-            SELECT j.id, j.type, j.attempts, j.max_attempts, j.fragment_id, j.asset_id, a.local_path
-            FROM jobs j
-            LEFT JOIN assets a ON a.id = j.asset_id
-            WHERE j.status = 'pending' AND j.available_at <= ? AND j.type IN (\(placeholders))
-            ORDER BY j.created_at
-            LIMIT 1;
-            """,
-            bind: { statement in
-                bindText(now, to: statement, at: 1)
-                for (index, type) in Self.handledTypes.enumerated() {
-                    bindText(type, to: statement, at: Int32(index + 2))
-                }
-            },
-            map: { statement in
-                ClaimedJob(
-                    id: columnText(statement, at: 0),
-                    type: columnText(statement, at: 1),
-                    attempts: Int(columnInt64(statement, at: 2)) + 1,
-                    maxAttempts: Int(columnInt64(statement, at: 3)),
-                    fragmentID: columnOptionalText(statement, at: 4).flatMap(UUID.init(uuidString:)),
-                    assetID: columnOptionalText(statement, at: 5).flatMap(UUID.init(uuidString:)),
-                    assetPath: columnOptionalText(statement, at: 6)
-                )
-            }
-        )
-        guard let job = rows?.first else { return nil }
-
-        do {
-            try database.write(
-                """
-                UPDATE jobs
-                SET status = 'running', attempts = ?, started_at = ?, updated_at = ?
-                WHERE id = ?;
+        return try? database.write { db -> ClaimedJob? in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT j.id, j.type, j.attempts, j.max_attempts, j.fragment_id, j.asset_id, a.local_path
+                FROM jobs j
+                LEFT JOIN assets a ON a.id = j.asset_id
+                WHERE j.status = 'pending' AND j.available_at <= :now
+                  AND j.type IN (SELECT value FROM json_each(:types))
+                ORDER BY j.created_at
+                LIMIT 1
                 """,
-                bind: { statement in
-                    bindInt64(Int64(job.attempts), to: statement, at: 1)
-                    bindText(now, to: statement, at: 2)
-                    bindText(now, to: statement, at: 3)
-                    bindText(job.id, to: statement, at: 4)
-                }
+                arguments: ["now": now, "types": Self.handledTypesJSON]
+            ) else {
+                return nil
+            }
+
+            let job = ClaimedJob(
+                id: row["id"],
+                type: row["type"],
+                attempts: (row["attempts"] as Int) + 1,
+                maxAttempts: row["max_attempts"],
+                fragmentID: (row["fragment_id"] as String?).flatMap(UUID.init(uuidString:)),
+                assetID: (row["asset_id"] as String?).flatMap(UUID.init(uuidString:)),
+                assetPath: row["local_path"]
             )
-        } catch {
-            return nil
+
+            try db.execute(
+                sql: """
+                UPDATE jobs
+                SET status = 'running', attempts = :attempts, started_at = :now, updated_at = :now
+                WHERE id = :id
+                """,
+                arguments: ["attempts": job.attempts, "now": now, "id": job.id]
+            )
+            return job
         }
-        return job
     }
 
     private func complete(_ job: ClaimedJob, status: JobStatus, error: String?) throws {
         let now = Date()
         let retryDelay = TimeInterval(pow(2, Double(job.attempts)) * 5)
         let availableAt = status == .pending ? now.addingTimeInterval(retryDelay) : now
-        try database.write(
-            """
-            UPDATE jobs
-            SET status = ?, finished_at = ?, updated_at = ?, available_at = ?, last_error = ?
-            WHERE id = ?;
-            """,
-            bind: { statement in
-                bindText(status.rawValue, to: statement, at: 1)
-                bindText(status == .pending ? nil : DateFormatting.string(from: now), to: statement, at: 2)
-                bindText(DateFormatting.string(from: now), to: statement, at: 3)
-                bindText(DateFormatting.string(from: availableAt), to: statement, at: 4)
-                bindText(error, to: statement, at: 5)
-                bindText(job.id, to: statement, at: 6)
-            }
-        )
+        try database.write { db in
+            try db.execute(
+                sql: """
+                UPDATE jobs
+                SET status = :status, finished_at = :finished_at, updated_at = :now, available_at = :available_at, last_error = :error
+                WHERE id = :id
+                """,
+                arguments: [
+                    "status": status.rawValue,
+                    "finished_at": status == .pending ? nil : DateFormatting.string(from: now),
+                    "now": DateFormatting.string(from: now),
+                    "available_at": DateFormatting.string(from: availableAt),
+                    "error": error,
+                    "id": job.id
+                ]
+            )
+        }
     }
 
     private func insertExtraction(kind: String, text: String, job: ClaimedJob) throws {
         guard let fragmentID = job.fragmentID else { return }
-        try database.write(
-            """
-            INSERT INTO extractions (id, fragment_id, asset_id, kind, content_text, metadata_json, created_at)
-            VALUES (?, ?, ?, ?, ?, '{}', ?);
-            """,
-            bind: { statement in
-                bindText(UUID().uuidString, to: statement, at: 1)
-                bindText(fragmentID.uuidString, to: statement, at: 2)
-                bindText(job.assetID?.uuidString, to: statement, at: 3)
-                bindText(kind, to: statement, at: 4)
-                bindText(text, to: statement, at: 5)
-                bindText(DateFormatting.string(from: Date()), to: statement, at: 6)
-            }
-        )
+        try database.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO extractions (id, fragment_id, asset_id, kind, content_text, metadata_json, created_at)
+                VALUES (:id, :fragment_id, :asset_id, :kind, :content_text, '{}', :created_at)
+                """,
+                arguments: [
+                    "id": UUID().uuidString,
+                    "fragment_id": fragmentID.uuidString,
+                    "asset_id": job.assetID?.uuidString,
+                    "kind": kind,
+                    "content_text": text,
+                    "created_at": DateFormatting.string(from: Date())
+                ]
+            )
+        }
     }
 
     private func updateFragmentStatus(for fragmentID: FragmentID?) {
         guard let fragmentID else { return }
-        let placeholders = Self.handledTypes.map { _ in "?" }.joined(separator: ", ")
-        let counts = try? database.query(
-            """
-            SELECT
-              SUM(CASE WHEN status IN ('pending', 'running') THEN 1 ELSE 0 END),
-              SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)
-            FROM jobs WHERE fragment_id = ? AND type IN (\(placeholders));
-            """,
-            bind: { statement in
-                bindText(fragmentID.uuidString, to: statement, at: 1)
-                for (index, type) in Self.handledTypes.enumerated() {
-                    bindText(type, to: statement, at: Int32(index + 2))
-                }
-            },
-            map: { (columnInt64($0, at: 0), columnInt64($0, at: 1)) }
-        ).first
-        guard let counts else { return }
-
-        let newStatus: FragmentStatus
-        if counts.0 > 0 {
-            newStatus = .processing
-        } else if counts.1 > 0 {
-            newStatus = .failed
-        } else {
-            newStatus = .ready
-        }
-        try? database.write(
-            "UPDATE fragments SET status = ?, updated_at = ? WHERE id = ?;",
-            bind: { statement in
-                bindText(newStatus.rawValue, to: statement, at: 1)
-                bindText(DateFormatting.string(from: Date()), to: statement, at: 2)
-                bindText(fragmentID.uuidString, to: statement, at: 3)
+        try? database.write { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT
+                  SUM(CASE WHEN status IN ('pending', 'running') THEN 1 ELSE 0 END) AS active,
+                  SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+                FROM jobs
+                WHERE fragment_id = :id AND type IN (SELECT value FROM json_each(:types))
+                """,
+                arguments: ["id": fragmentID.uuidString, "types": Self.handledTypesJSON]
+            ) else {
+                return
             }
-        )
+
+            let newStatus: FragmentStatus
+            if (row["active"] as Int? ?? 0) > 0 {
+                newStatus = .processing
+            } else if (row["failed"] as Int? ?? 0) > 0 {
+                newStatus = .failed
+            } else {
+                newStatus = .ready
+            }
+            try db.execute(
+                sql: "UPDATE fragments SET status = :status, updated_at = :now WHERE id = :id",
+                arguments: [
+                    "status": newStatus.rawValue,
+                    "now": DateFormatting.string(from: Date()),
+                    "id": fragmentID.uuidString
+                ]
+            )
+        }
     }
 
     private func resetStaleRunningJobs() {
-        try? database.write(
-            "UPDATE jobs SET status = 'pending', updated_at = ? WHERE status = 'running';",
-            bind: { bindText(DateFormatting.string(from: Date()), to: $0, at: 1) }
-        )
+        try? database.write { db in
+            try db.execute(
+                sql: "UPDATE jobs SET status = 'pending', updated_at = :now WHERE status = 'running'",
+                arguments: ["now": DateFormatting.string(from: Date())]
+            )
+        }
     }
 }

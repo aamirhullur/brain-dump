@@ -66,6 +66,7 @@ enum ImageIngest {
         UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
     }
 
+    @MainActor
     private static func fileURL(from provider: NSItemProvider) async -> URL? {
         await withCheckedContinuation { continuation in
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
@@ -74,6 +75,7 @@ enum ImageIngest {
         }
     }
 
+    @MainActor
     private static func data(from provider: NSItemProvider, type: UTType) async -> Data? {
         await withCheckedContinuation { continuation in
             provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in

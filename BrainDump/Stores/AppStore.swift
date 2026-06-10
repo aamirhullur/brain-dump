@@ -6,7 +6,7 @@ import Observation
 final class AppStore {
     let storage: AppStorageLocator
     let fragmentStore: FragmentStore
-    private let database: Database
+    private let database: AppDatabase
     private var jobRunner: JobRunner?
 
     var isMemoryInletPresented = false
@@ -16,7 +16,7 @@ final class AppStore {
     init() {
         do {
             let storage = try AppStorageLocator.live()
-            let database = try Database(path: storage.databaseURL.path)
+            let database = try AppDatabase(path: storage.databaseURL.path)
             try database.migrate()
             let blobStore = BlobStore(root: storage.blobsURL)
 
@@ -48,7 +48,8 @@ final class AppStore {
                 exportsURL: fallback.appendingPathComponent("exports", isDirectory: true),
                 logsURL: fallback.appendingPathComponent("logs", isDirectory: true)
             )
-            self.database = try! Database(path: ":memory:")
+            self.database = try! AppDatabase(path: ":memory:")
+            try? self.database.migrate()
             self.fragmentStore = FragmentStore(database: database, blobStore: BlobStore(root: storage.blobsURL))
             self.startupError = error.localizedDescription
         }
