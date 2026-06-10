@@ -15,6 +15,9 @@ struct FragmentDetailView: View {
                     assetPath: fragmentStore.primaryAssetLocalPath(for: fragment.id)
                 )
 
+                NoteBlock(fragment: fragment, fragmentStore: fragmentStore)
+                    .id(fragment.id)
+
                 if let extractedText = fragmentStore.extractedText(for: fragment.id) {
                     ExtractedTextBlock(text: extractedText)
                 }
@@ -107,6 +110,54 @@ private struct EvidenceBlock: View {
     }
 }
 
+private struct NoteBlock: View {
+    let fragment: Fragment
+    let fragmentStore: FragmentStore
+    @State private var noteText: String
+    @FocusState private var isEditing: Bool
+
+    init(fragment: Fragment, fragmentStore: FragmentStore) {
+        self.fragment = fragment
+        self.fragmentStore = fragmentStore
+        _noteText = State(initialValue: fragment.userNote ?? "")
+    }
+
+    var body: some View {
+        InspectorSection("Note") {
+            TextEditor(text: $noteText)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 72)
+                .padding(10)
+                .background(DesignTokens.contentSurface, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(alignment: .topLeading) {
+                    if noteText.isEmpty {
+                        Text("Add a note about this evidence")
+                            .font(.body)
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, 15)
+                            .padding(.top, 10)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .focused($isEditing)
+                .accessibilityLabel("Note")
+                .onChange(of: isEditing) { _, editing in
+                    if !editing {
+                        save()
+                    }
+                }
+                .onDisappear(perform: save)
+        }
+    }
+
+    private func save() {
+        guard noteText != (fragment.userNote ?? "") else { return }
+        fragmentStore.updateUserNote(noteText, for: fragment.id)
+    }
+}
+
 private struct ExtractedTextBlock: View {
     let text: String
 
@@ -169,6 +220,7 @@ private struct ThemeBlock: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 30, height: 30)
                     .background(DesignTokens.contentSurface, in: RoundedRectangle(cornerRadius: 8))
+                    .accessibilityHidden(true)
             }
         }
     }
@@ -195,6 +247,7 @@ private struct ConnectedEvidenceRow: View {
         HStack(spacing: 10) {
             Image(systemName: "doc.text")
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.callout.weight(.medium))
@@ -206,8 +259,10 @@ private struct ConnectedEvidenceRow: View {
             Image(systemName: "chevron.right")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
         .padding(12)
+        .accessibilityElement(children: .combine)
     }
 }
 
