@@ -7,6 +7,7 @@ final class AppStore {
     let storage: AppStorageLocator
     let fragmentStore: FragmentStore
     private let database: Database
+    private var jobRunner: JobRunner?
 
     var isMemoryInletPresented = false
     var memoryInletRequestCount = 0
@@ -22,7 +23,21 @@ final class AppStore {
             self.storage = storage
             self.database = database
             self.fragmentStore = FragmentStore(database: database, blobStore: blobStore)
+            self.fragmentStore.thumbnailsRoot = storage.thumbnailsURL
             self.fragmentStore.loadFragments()
+
+            let runner = JobRunner(
+                database: database,
+                thumbnailsURL: storage.thumbnailsURL,
+                onFragmentsChanged: { [weak fragmentStore = self.fragmentStore] in
+                    fragmentStore?.loadFragments()
+                }
+            )
+            self.jobRunner = runner
+            self.fragmentStore.onJobsEnqueued = { [weak runner] in
+                runner?.kick()
+            }
+            runner.start()
         } catch {
             let fallback = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("BrainDump", isDirectory: true)
             self.storage = AppStorageLocator(

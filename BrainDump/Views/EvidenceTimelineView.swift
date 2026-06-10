@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -37,6 +38,7 @@ struct EvidenceTimelineView: View {
                         ForEach(filteredFragments) { fragment in
                             EvidenceRow(
                                 fragment: fragment,
+                                thumbnailURL: fragmentStore.thumbnailURL(for: fragment),
                                 isSelected: fragment.id == fragmentStore.selectedFragmentID
                             ) {
                                 fragmentStore.select(fragment)
@@ -96,6 +98,7 @@ private struct TimelineHeader: View {
 
 private struct EvidenceRow: View {
     let fragment: Fragment
+    let thumbnailURL: URL?
     let isSelected: Bool
     let onSelect: () -> Void
 
@@ -124,7 +127,7 @@ private struct EvidenceRow: View {
                         .multilineTextAlignment(.leading)
                 }
 
-                SourceThumbnail(fragment: fragment)
+                SourceThumbnail(fragment: fragment, thumbnailURL: thumbnailURL)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 13)
@@ -164,14 +167,23 @@ private struct SourceTag: View {
 
 private struct SourceThumbnail: View {
     let fragment: Fragment
+    let thumbnailURL: URL?
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.quaternary)
-            Image(systemName: fragment.sourceSystemImage)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.secondary)
+            if let thumbnailURL, let image = NSImage(contentsOf: thumbnailURL) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.quaternary)
+                Image(systemName: fragment.sourceSystemImage)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(width: 44, height: 44)
     }

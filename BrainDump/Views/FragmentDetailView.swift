@@ -15,7 +15,14 @@ struct FragmentDetailView: View {
                     assetPath: fragmentStore.primaryAssetLocalPath(for: fragment.id)
                 )
 
-                InterpretationBlock(jobCount: fragmentStore.jobCount(for: fragment.id))
+                if let extractedText = fragmentStore.extractedText(for: fragment.id) {
+                    ExtractedTextBlock(text: extractedText)
+                }
+
+                InterpretationBlock(
+                    status: fragment.status,
+                    pendingJobCount: fragmentStore.pendingJobCount(for: fragment.id)
+                )
 
                 ThemeBlock()
 
@@ -100,20 +107,43 @@ private struct EvidenceBlock: View {
     }
 }
 
+private struct ExtractedTextBlock: View {
+    let text: String
+
+    var body: some View {
+        InspectorSection("Extracted text") {
+            Text(text)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+                .background(DesignTokens.contentSurface, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
 private struct InterpretationBlock: View {
-    let jobCount: Int
+    let status: FragmentStatus
+    let pendingJobCount: Int
 
     var body: some View {
         InspectorSection("Interpretation") {
             VStack(alignment: .leading, spacing: 10) {
-                Text("This fragment is saved as raw evidence. Summary, concepts, and related themes will appear after the processing engine runs.")
+                Text("This fragment is saved as raw evidence. Summary, concepts, and related themes will appear after AI interpretation runs.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Label("\(jobCount) background jobs queued", systemImage: "clock.arrow.circlepath")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+                if pendingJobCount > 0 {
+                    Label("\(pendingJobCount) background jobs remaining", systemImage: "clock.arrow.circlepath")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Label(status == .failed ? "Processing failed" : "Processing complete", systemImage: status == .failed ? "exclamationmark.circle" : "checkmark.circle")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }

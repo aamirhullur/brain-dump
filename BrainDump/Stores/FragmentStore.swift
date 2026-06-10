@@ -20,6 +20,8 @@ enum CaptureError: LocalizedError {
 final class FragmentStore {
     private let database: Database
     private let blobStore: BlobStore
+    var thumbnailsRoot: URL?
+    var onJobsEnqueued: (() -> Void)?
 
     private(set) var fragments: [Fragment] = []
     var selectedFragmentID: FragmentID?
@@ -143,6 +145,7 @@ final class FragmentStore {
 
         loadFragments()
         selectedFragmentID = fragmentID
+        onJobsEnqueued?()
     }
 
     @discardableResult
@@ -218,6 +221,7 @@ final class FragmentStore {
 
         loadFragments()
         selectedFragmentID = fragmentID
+        onJobsEnqueued?()
         return fragmentID
     }
 
@@ -238,6 +242,37 @@ final class FragmentStore {
     private func defaultImageTitle(sourceType: SourceType, capturedAt: Date) -> String {
         let stamp = capturedAt.formatted(date: .abbreviated, time: .shortened)
         return sourceType == .screenshot ? "Screenshot \(stamp)" : "Image \(stamp)"
+    }
+
+    func thumbnailURL(for fragment: Fragment) -> URL? {
+        guard let thumbnailsRoot, let assetID = fragment.primaryAssetID else { return nil }
+        let url = thumbnailsRoot.appendingPathComponent("\(assetID.uuidString).png")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    func extractedText(for fragmentID: FragmentID) -> String? {
+        let rows = try? database.query(
+            "SELECT content_text FROM extractions WHERE fragment_id = ? AND kind = 'ocr_text' ORDER BY created_at DESC LIMIT 1;",
+            bind: { bindText(fragmentID.uuidString, to: $0, at: 1) },
+            map: { columnOptionalText($0, at: 0) }
+        )
+        let text = rows?.first ?? nil
+        return text?.isEmpty == false ? text : nil
+    }
+
+    func pendingJobCount(for fragmentID: FragmentID) -> Int {
+        let placeholders = JobRunner.handledTypes.map { _ in "?" }.joined(separator: ", ")
+        let rows = try? database.query(
+            "SELECT COUNT(*) FROM jobs WHERE fragment_id = ? AND status IN ('pending', 'running') AND type IN (\(placeholders));",
+            bind: { statement in
+                bindText(fragmentID.uuidString, to: statement, at: 1)
+                for (index, type) in JobRunner.handledTypes.enumerated() {
+                    bindText(type, to: statement, at: Int32(index + 2))
+                }
+            },
+            map: { Int(columnInt64($0, at: 0)) }
+        )
+        return rows?.first ?? 0
     }
 
     func jobCount(for fragmentID: FragmentID) -> Int {
