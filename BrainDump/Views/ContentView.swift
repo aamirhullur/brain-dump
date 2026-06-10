@@ -12,7 +12,7 @@ struct ContentView: View {
             if isSidebarVisible {
                 SidebarView(
                     selectedSection: $selectedSection,
-                    fragmentCount: appStore.fragmentStore.fragments.count
+                    fragments: appStore.fragmentStore.fragments
                 )
                 .frame(width: 260)
                 .transition(.move(edge: .leading).combined(with: .opacity))
@@ -20,6 +20,7 @@ struct ContentView: View {
 
             EvidenceTimelineView(
                 fragmentStore: appStore.fragmentStore,
+                section: selectedSection,
                 searchText: $searchText
             )
             .frame(minWidth: 430, idealWidth: 500, maxWidth: 560)
@@ -57,12 +58,20 @@ struct ContentView: View {
                 }
                 .help("Capture Fragment")
 
+                let selectedFragment = appStore.fragmentStore.selectedFragment
+                let isBookmarked = selectedFragment?.isBookmarked == true
                 Button {
+                    if let selectedFragment {
+                        appStore.fragmentStore.toggleBookmark(selectedFragment.id)
+                    }
                 } label: {
-                    Label("Bookmark", systemImage: "bookmark")
+                    Label(
+                        isBookmarked ? "Remove Bookmark" : "Bookmark",
+                        systemImage: isBookmarked ? "bookmark.fill" : "bookmark"
+                    )
                 }
-                .disabled(appStore.fragmentStore.selectedFragment == nil)
-                .help("Bookmark")
+                .disabled(selectedFragment == nil)
+                .help(isBookmarked ? "Remove Bookmark" : "Bookmark")
             }
         }
         .alert(

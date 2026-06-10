@@ -8,10 +8,6 @@ enum AppSection: String, CaseIterable, Identifiable {
     case text
     case links
     case screenshots
-    case quickNotes
-    case files
-    case themes
-    case digests
 
     var id: String { rawValue }
 
@@ -31,14 +27,6 @@ enum AppSection: String, CaseIterable, Identifiable {
             return "Links"
         case .screenshots:
             return "Screenshots"
-        case .quickNotes:
-            return "Quick Notes"
-        case .files:
-            return "Files"
-        case .themes:
-            return "Themes"
-        case .digests:
-            return "Digests"
         }
     }
 
@@ -58,14 +46,25 @@ enum AppSection: String, CaseIterable, Identifiable {
             return "link"
         case .screenshots:
             return "viewfinder"
-        case .quickNotes:
-            return "square.and.pencil"
-        case .files:
-            return "doc"
-        case .themes:
-            return "sparkles"
-        case .digests:
-            return "newspaper"
+        }
+    }
+
+    func includes(_ fragment: Fragment, now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        switch self {
+        case .allEvidence:
+            return true
+        case .today:
+            return calendar.isDate(fragment.createdAt, inSameDayAs: now)
+        case .unprocessed:
+            return fragment.status == .captured || fragment.status == .processing
+        case .bookmarks:
+            return fragment.isBookmarked
+        case .text:
+            return fragment.sourceType == .text
+        case .links:
+            return fragment.sourceType == .url
+        case .screenshots:
+            return fragment.sourceType == .screenshot
         }
     }
 }

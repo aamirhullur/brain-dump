@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SidebarView: View {
     @Binding var selectedSection: AppSection
-    let fragmentCount: Int
+    let fragments: [Fragment]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -11,23 +11,16 @@ struct SidebarView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     SidebarSection("Inbox") {
-                        SidebarItem(section: .allEvidence, count: fragmentCount, selectedSection: $selectedSection)
-                        SidebarItem(section: .today, count: todayCount, selectedSection: $selectedSection)
-                        SidebarItem(section: .unprocessed, count: fragmentCount, selectedSection: $selectedSection)
-                        SidebarItem(section: .bookmarks, count: 0, selectedSection: $selectedSection)
+                        sidebarItem(for: .allEvidence)
+                        sidebarItem(for: .today)
+                        sidebarItem(for: .unprocessed)
+                        sidebarItem(for: .bookmarks)
                     }
 
                     SidebarSection("Sources") {
-                        SidebarItem(section: .text, count: textCount, selectedSection: $selectedSection)
-                        SidebarItem(section: .links, count: linkCount, selectedSection: $selectedSection)
-                        SidebarItem(section: .screenshots, count: 0, selectedSection: $selectedSection)
-                        SidebarItem(section: .quickNotes, count: 0, selectedSection: $selectedSection)
-                        SidebarItem(section: .files, count: 0, selectedSection: $selectedSection)
-                    }
-
-                    SidebarSection("Insights") {
-                        SidebarItem(section: .themes, count: 0, selectedSection: $selectedSection)
-                        SidebarItem(section: .digests, count: 0, selectedSection: $selectedSection)
+                        sidebarItem(for: .text)
+                        sidebarItem(for: .links)
+                        sidebarItem(for: .screenshots)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -42,9 +35,13 @@ struct SidebarView: View {
         .navigationTitle("Brain Dump")
     }
 
-    private var todayCount: Int { fragmentCount }
-    private var textCount: Int { fragmentCount }
-    private var linkCount: Int { 0 }
+    private func sidebarItem(for section: AppSection) -> some View {
+        SidebarItem(
+            section: section,
+            count: fragments.filter { section.includes($0) }.count,
+            selectedSection: $selectedSection
+        )
+    }
 }
 
 private struct SidebarSection<Content: View>: View {
@@ -74,6 +71,7 @@ private struct SidebarTitle: View {
             Image(systemName: "line.3.horizontal.decrease")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.78))
+                .accessibilityHidden(true)
             Text("Brain Dump")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.92))
@@ -102,6 +100,7 @@ private struct SidebarItem: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(isSelected ? .white.opacity(0.9) : .white.opacity(0.6))
                     .frame(width: 18)
+                    .accessibilityHidden(true)
                 Text(section.title)
                     .font(.callout.weight(isSelected ? .semibold : .medium))
                     .foregroundStyle(isSelected ? .white : .white.opacity(0.78))
@@ -129,5 +128,11 @@ private struct SidebarItem: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var accessibilityLabel: String {
+        count > 0 ? "\(section.title), \(count) fragments" : section.title
     }
 }
