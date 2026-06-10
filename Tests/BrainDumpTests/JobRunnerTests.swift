@@ -85,6 +85,32 @@ struct JobRunnerTests {
     }
 
     @Test
+    func kickDrivesProcessingWithoutPolling() async throws {
+        let env = try TestEnvironment()
+        defer { env.tearDown() }
+
+        let runner = JobRunner(database: env.database, thumbnailsURL: env.thumbnailsURL)
+        env.store.onJobsEnqueued = { [weak runner] in runner?.kick() }
+        runner.start()
+        defer { runner.stop() }
+
+        try env.store.captureImage(Self.textImagePNG("KICK"), sourceType: .image)
+
+        for _ in 0..<100 {
+            let remaining = try env.database.query(
+                "SELECT COUNT(*) FROM jobs WHERE type IN ('generate_thumbnail', 'ocr_image') AND status != 'succeeded';"
+            ) { Int(columnInt64($0, at: 0)) }.first ?? 0
+            if remaining == 0 { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        let succeeded = try env.database.query(
+            "SELECT COUNT(*) FROM jobs WHERE status = 'succeeded';"
+        ) { Int(columnInt64($0, at: 0)) }.first
+        #expect(succeeded == 2)
+    }
+
+    @Test
     func staleRunningJobsResetOnStart() throws {
         let env = try TestEnvironment()
         defer { env.tearDown() }
@@ -92,7 +118,7 @@ struct JobRunnerTests {
         try env.store.captureImage(Self.textImagePNG("X"), sourceType: .image)
         try env.database.execute("UPDATE jobs SET status = 'running';")
 
-        let runner = JobRunner(database: env.database, thumbnailsURL: env.thumbnailsURL, idleInterval: .seconds(60))
+        let runner = JobRunner(database: env.database, thumbnailsURL: env.thumbnailsURL)
         runner.start()
         runner.stop()
 

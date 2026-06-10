@@ -21,6 +21,7 @@ final class FragmentStore {
     private let database: Database
     private let blobStore: BlobStore
     var thumbnailsRoot: URL?
+    var onJobsEnqueued: (() -> Void)?
 
     private(set) var fragments: [Fragment] = []
     var selectedFragmentID: FragmentID?
@@ -144,6 +145,7 @@ final class FragmentStore {
 
         loadFragments()
         selectedFragmentID = fragmentID
+        onJobsEnqueued?()
     }
 
     @discardableResult
@@ -219,6 +221,7 @@ final class FragmentStore {
 
         loadFragments()
         selectedFragmentID = fragmentID
+        onJobsEnqueued?()
         return fragmentID
     }
 

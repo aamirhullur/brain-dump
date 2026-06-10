@@ -34,6 +34,9 @@ final class AppStore {
                 }
             )
             self.jobRunner = runner
+            self.fragmentStore.onJobsEnqueued = { [weak runner] in
+                runner?.kick()
+            }
             runner.start()
         } catch {
             let fallback = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("BrainDump", isDirectory: true)

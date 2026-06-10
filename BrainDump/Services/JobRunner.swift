@@ -8,22 +8,24 @@ final class JobRunner {
     private let thumbnailsURL: URL
     private let onFragmentsChanged: () -> Void
     private var loopTask: Task<Void, Never>?
-    private let idleInterval: Duration
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var pendingKick = false
+    private var retryWakeTask: Task<Void, Never>?
 
     init(
         database: Database,
         thumbnailsURL: URL,
-        idleInterval: Duration = .seconds(2),
         onFragmentsChanged: @escaping () -> Void = {}
     ) {
         self.database = database
         self.thumbnailsURL = thumbnailsURL
-        self.idleInterval = idleInterval
         self.onFragmentsChanged = onFragmentsChanged
     }
 
     deinit {
         loopTask?.cancel()
+        retryWakeTask?.cancel()
+        waiter?.resume()
     }
 
     func start() {
@@ -32,10 +34,9 @@ final class JobRunner {
         loopTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let ranJob = await self.processNextJob()
-                if !ranJob {
-                    try? await Task.sleep(for: self.idleInterval)
-                }
+                await self.processAllPending()
+                if Task.isCancelled { return }
+                await self.waitForWork()
             }
         }
     }
@@ -43,6 +44,64 @@ final class JobRunner {
     func stop() {
         loopTask?.cancel()
         loopTask = nil
+        retryWakeTask?.cancel()
+        retryWakeTask = nil
+        wake()
+    }
+
+    /// Call after enqueueing jobs so the runner picks them up immediately.
+    func kick() {
+        wake()
+    }
+
+    private func wake() {
+        if let waiter {
+            self.waiter = nil
+            waiter.resume()
+        } else {
+            pendingKick = true
+        }
+    }
+
+    private func waitForWork() async {
+        if pendingKick {
+            pendingKick = false
+            return
+        }
+
+        if let retryDelay = nextRetryDelay() {
+            retryWakeTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(retryDelay))
+                guard !Task.isCancelled else { return }
+                self?.wake()
+            }
+        }
+
+        await withCheckedContinuation { continuation in
+            if pendingKick {
+                pendingKick = false
+                continuation.resume()
+            } else {
+                waiter = continuation
+            }
+        }
+        retryWakeTask?.cancel()
+        retryWakeTask = nil
+    }
+
+    private func nextRetryDelay() -> TimeInterval? {
+        let placeholders = Self.handledTypes.map { _ in "?" }.joined(separator: ", ")
+        let rows = try? database.query(
+            "SELECT MIN(available_at) FROM jobs WHERE status = 'pending' AND type IN (\(placeholders));",
+            bind: { statement in
+                for (index, type) in Self.handledTypes.enumerated() {
+                    bindText(type, to: statement, at: Int32(index + 1))
+                }
+            },
+            map: { columnOptionalText($0, at: 0) }
+        )
+        guard let availableAt = rows?.first ?? nil else { return nil }
+        return max(0.1, DateFormatting.date(from: availableAt).timeIntervalSinceNow)
     }
 
     @discardableResult
