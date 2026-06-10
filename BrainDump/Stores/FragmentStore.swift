@@ -25,6 +25,7 @@ extension Fragment {
             sourceType: SourceType(rawValue: row["source_type"]) ?? .text,
             title: row["title"],
             userNote: row["user_note"],
+            annotation: row["annotation"],
             status: FragmentStatus(rawValue: row["status"]) ?? .captured,
             primaryAssetID: (row["primary_asset_id"] as String?).flatMap(UUID.init(uuidString:)),
             bookmarkedAt: (row["bookmarked_at"] as String?).map(DateFormatting.date(from:))
@@ -60,7 +61,7 @@ final class FragmentStore {
                 try Row.fetchAll(
                     db,
                     sql: """
-                    SELECT id, created_at, updated_at, source_type, title, user_note, status, primary_asset_id, bookmarked_at
+                    SELECT id, created_at, updated_at, source_type, title, user_note, annotation, status, primary_asset_id, bookmarked_at
                     FROM fragments
                     WHERE deleted_at IS NULL
                     ORDER BY created_at DESC
@@ -285,12 +286,12 @@ final class FragmentStore {
         fragments.first { $0.id == fragmentID }?.isBookmarked ?? false
     }
 
-    func updateUserNote(_ note: String, for fragmentID: FragmentID) {
-        let storedNote: String? = note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : note
+    func updateAnnotation(_ annotation: String, for fragmentID: FragmentID) {
+        let storedNote: String? = annotation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : annotation
         do {
             try database.write { db in
                 try db.execute(
-                    sql: "UPDATE fragments SET user_note = :note, updated_at = :now WHERE id = :id",
+                    sql: "UPDATE fragments SET annotation = :note, updated_at = :now WHERE id = :id",
                     arguments: [
                         "note": storedNote,
                         "now": DateFormatting.string(from: Date()),

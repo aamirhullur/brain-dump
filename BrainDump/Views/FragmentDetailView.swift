@@ -119,7 +119,7 @@ private struct NoteBlock: View {
     init(fragment: Fragment, fragmentStore: FragmentStore) {
         self.fragment = fragment
         self.fragmentStore = fragmentStore
-        _noteText = State(initialValue: fragment.userNote ?? "")
+        _noteText = State(initialValue: fragment.annotation ?? "")
     }
 
     var body: some View {
@@ -153,8 +153,8 @@ private struct NoteBlock: View {
     }
 
     private func save() {
-        guard noteText != (fragment.userNote ?? "") else { return }
-        fragmentStore.updateUserNote(noteText, for: fragment.id)
+        guard noteText != (fragment.annotation ?? "") else { return }
+        fragmentStore.updateAnnotation(noteText, for: fragment.id)
     }
 }
 

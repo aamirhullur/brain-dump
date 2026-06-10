@@ -7,6 +7,7 @@ struct Fragment: Identifiable, Equatable {
     let sourceType: SourceType
     let title: String?
     let userNote: String?
+    let annotation: String?
     let status: FragmentStatus
     let primaryAssetID: AssetID?
     let bookmarkedAt: Date?

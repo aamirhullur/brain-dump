@@ -114,22 +114,25 @@ struct FragmentStoreTests {
     }
 
     @Test
-    func userNoteUpdatePersistsAcrossReload() throws {
+    func annotationUpdatePersistsAndPreservesCapturedEvidence() throws {
         let fixture = try StoreFixture.make()
         defer { fixture.tearDown() }
 
         try fixture.store.capture(rawInput: "original capture text")
         let fragmentID = try #require(fixture.store.fragments.first).id
 
-        fixture.store.updateUserNote("my annotation", for: fragmentID)
-        #expect(fixture.store.fragments.first?.userNote == "my annotation")
+        fixture.store.updateAnnotation("my annotation", for: fragmentID)
+        #expect(fixture.store.fragments.first?.annotation == "my annotation")
+        #expect(fixture.store.fragments.first?.userNote == "original capture text")
 
         let reloaded = try fixture.reopenStore()
-        #expect(reloaded.fragments.first?.userNote == "my annotation")
+        #expect(reloaded.fragments.first?.annotation == "my annotation")
+        #expect(reloaded.fragments.first?.userNote == "original capture text")
 
-        fixture.store.updateUserNote("   ", for: fragmentID)
+        fixture.store.updateAnnotation("   ", for: fragmentID)
         let reloadedBlank = try fixture.reopenStore()
-        #expect(reloadedBlank.fragments.first?.userNote == nil)
+        #expect(reloadedBlank.fragments.first?.annotation == nil)
+        #expect(reloadedBlank.fragments.first?.userNote == "original capture text")
     }
 
     @Test
