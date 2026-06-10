@@ -4,6 +4,9 @@ import GRDB
 import Testing
 @testable import BrainDump
 
+// Vision text recognition wedges when requests run concurrently on
+// virtualized CI runners, so these tests must not interleave.
+@Suite(.serialized)
 @MainActor
 struct JobRunnerTests {
     @Test
@@ -131,6 +134,96 @@ struct JobRunnerTests {
             try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM jobs WHERE status = 'running'")
         }
         #expect(running == 0)
+    }
+
+    @Test
+    func urlMetadataJobInsertsExtractionAndUpdatesTitle() async throws {
+        let env = try TestEnvironment()
+        defer { env.tearDown() }
+
+        try env.store.capture(rawInput: "https://example.com/article")
+
+        let runner = JobRunner(database: env.database, thumbnailsURL: env.thumbnailsURL)
+        runner.pageFetcher = { _ in
+            """
+            <html><head>
+            <title>Example Article</title>
+            <meta name="description" content="A story about brains.">
+            <meta property="og:image" content="https://example.com/og.png">
+            </head></html>
+            """
+        }
+        let processed = await runner.processAllPending()
+        #expect(processed == 1)
+
+        let row = try env.database.read { db in
+            try Row.fetchOne(db, sql: "SELECT content_text, metadata_json FROM extractions WHERE kind = 'url_metadata'")
+        }
+        #expect(row != nil)
+        if let row {
+            #expect((row["content_text"] as String?) == "Example Article\nA story about brains.")
+            let json = try JSONSerialization.jsonObject(with: Data(((row["metadata_json"] as String?) ?? "{}").utf8)) as? [String: String]
+            #expect(json?["title"] == "Example Article")
+            #expect(json?["description"] == "A story about brains.")
+            #expect(json?["og_image"] == "https://example.com/og.png")
+        }
+
+        env.store.loadFragments()
+        #expect(env.store.fragments.first?.title == "Example Article")
+        #expect(env.store.fragments.first?.status == .ready)
+    }
+
+    @Test
+    func urlMetadataFetchFailureBacksOffForRetry() async throws {
+        let env = try TestEnvironment()
+        defer { env.tearDown() }
+
+        try env.store.capture(rawInput: "https://example.com/down")
+
+        let runner = JobRunner(database: env.database, thumbnailsURL: env.thumbnailsURL)
+        runner.pageFetcher = { _ in throw URLError(.timedOut) }
+        await runner.processAllPending()
+
+        let row = try env.database.read { db in
+            try Row.fetchOne(db, sql: "SELECT status, attempts, available_at, last_error FROM jobs WHERE type = 'extract_url_metadata'")
+        }
+        #expect(row != nil)
+        if let row {
+            #expect(row["status"] == "pending")
+            #expect(row["attempts"] == 1)
+            #expect((row["last_error"] as String?) != nil)
+            #expect(DateFormatting.date(from: row["available_at"]) > Date())
+        }
+
+        env.store.loadFragments()
+        #expect(env.store.fragments.first?.status == .processing)
+
+        let extractions = try env.database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM extractions")
+        }
+        #expect(extractions == 0)
+    }
+
+    @Test
+    func processingCountTracksHandledJobs() async throws {
+        let env = try TestEnvironment()
+        defer { env.tearDown() }
+
+        env.store.loadFragments()
+        #expect(env.store.processingCount == 0)
+
+        try env.store.capture(rawInput: "https://example.com/page")
+        #expect(env.store.processingCount == 1)
+
+        try env.store.captureImage(Self.textImagePNG("COUNT"), sourceType: .image)
+        #expect(env.store.processingCount == 3)
+
+        let runner = JobRunner(database: env.database, thumbnailsURL: env.thumbnailsURL)
+        runner.pageFetcher = { _ in "<title>Counted</title>" }
+        await runner.processAllPending()
+
+        env.store.loadFragments()
+        #expect(env.store.processingCount == 0)
     }
 
     private static func textImagePNG(_ text: String) -> Data {

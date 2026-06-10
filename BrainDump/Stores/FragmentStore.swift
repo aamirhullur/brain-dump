@@ -40,6 +40,7 @@ final class FragmentStore {
     var onJobsEnqueued: (() -> Void)?
 
     private(set) var fragments: [Fragment] = []
+    private(set) var processingCount = 0
     var selectedFragmentID: FragmentID?
     private(set) var lastError: String?
 
@@ -76,6 +77,23 @@ final class FragmentStore {
         } catch {
             lastError = error.localizedDescription
         }
+
+        refreshProcessingCount()
+    }
+
+    func refreshProcessingCount() {
+        let count = try? database.read { db in
+            try Int.fetchOne(
+                db,
+                sql: """
+                SELECT COUNT(*) FROM jobs
+                WHERE status IN ('pending', 'running')
+                  AND type IN (SELECT value FROM json_each(:types))
+                """,
+                arguments: ["types": JobRunner.handledTypesJSON]
+            )
+        }
+        processingCount = count ?? 0
     }
 
     func select(_ fragment: Fragment?) {

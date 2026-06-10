@@ -3,7 +3,7 @@ import GRDB
 
 @MainActor
 final class JobRunner {
-    static let handledTypes = ["generate_thumbnail", "ocr_image"]
+    static let handledTypes = ["generate_thumbnail", "ocr_image", "extract_url_metadata"]
     static let handledTypesJSON = String(data: try! JSONEncoder().encode(handledTypes), encoding: .utf8)!
 
     private let database: AppDatabase
@@ -13,6 +13,9 @@ final class JobRunner {
     private var waiter: CheckedContinuation<Void, Never>?
     private var pendingKick = false
     private var retryWakeTask: Task<Void, Never>?
+    var pageFetcher: (URL) async throws -> String = { url in
+        try await JobRunner.fetchPage(from: url)
+    }
 
     init(
         database: AppDatabase,
@@ -59,7 +62,7 @@ final class JobRunner {
     @discardableResult
     func processAllPending() async -> Int {
         var processed = 0
-        while await processNextJob() {
+        while !Task.isCancelled, await processNextJob() {
             processed += 1
         }
         return processed
@@ -132,27 +135,81 @@ final class JobRunner {
     }
 
     private func execute(_ job: ClaimedJob) async throws {
-        guard let assetPath = job.assetPath else {
-            throw JobError.missingAsset
-        }
-        let data = try Data(contentsOf: URL(fileURLWithPath: assetPath))
-
         switch job.type {
         case "generate_thumbnail":
             guard let assetID = job.assetID else { throw JobError.missingAsset }
+            let data = try assetData(for: job)
             let thumbnail = try await Task.detached(priority: .utility) {
                 try ImageProcessing.thumbnailPNG(from: data)
             }.value
             try FileManager.default.createDirectory(at: thumbnailsURL, withIntermediateDirectories: true)
             try thumbnail.write(to: thumbnailsURL.appendingPathComponent("\(assetID.uuidString).png"), options: [.atomic])
         case "ocr_image":
+            let data = try assetData(for: job)
             let text = try await Task.detached(priority: .utility) {
                 try ImageProcessing.recognizeText(in: data)
             }.value
             try insertExtraction(kind: "ocr_text", text: text, job: job)
+        case "extract_url_metadata":
+            try await extractURLMetadata(job)
         default:
             throw JobError.unhandledType(job.type)
         }
+    }
+
+    private func assetData(for job: ClaimedJob) throws -> Data {
+        guard let assetPath = job.assetPath else {
+            throw JobError.missingAsset
+        }
+        return try Data(contentsOf: URL(fileURLWithPath: assetPath))
+    }
+
+    private func extractURLMetadata(_ job: ClaimedJob) async throws {
+        guard let sourceURL = job.sourceURL else {
+            throw JobError.missingSourceURL
+        }
+        guard let url = URL(string: sourceURL),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            throw JobError.unsupportedURL(sourceURL)
+        }
+
+        let html = try await pageFetcher(url)
+        let metadata = URLMetadataParser.parse(html: html)
+        try insertExtraction(
+            kind: "url_metadata",
+            text: metadata.contentText,
+            metadataJSON: metadata.metadataJSON,
+            job: job
+        )
+        if let pageTitle = metadata.bestTitle {
+            try updateFragmentTitle(pageTitle, fragmentID: job.fragmentID)
+        }
+    }
+
+    nonisolated static func fetchPage(from url: URL) async throws -> String {
+        let maxBodyBytes = 2 * 1024 * 1024
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15
+        configuration.timeoutIntervalForResource = 15
+        let session = URLSession(configuration: configuration)
+        defer { session.finishTasksAndInvalidate() }
+
+        let (bytes, response) = try await session.bytes(from: url)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw JobError.httpFailure(http.statusCode)
+        }
+
+        var data = Data()
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count >= maxBodyBytes { break }
+        }
+
+        if let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) {
+            return text
+        }
+        throw JobError.undecodableBody
     }
 
     private struct ClaimedJob {
@@ -163,16 +220,29 @@ final class JobRunner {
         let fragmentID: FragmentID?
         let assetID: AssetID?
         let assetPath: String?
+        let sourceURL: String?
     }
 
     private enum JobError: LocalizedError {
         case missingAsset
+        case missingSourceURL
+        case unsupportedURL(String)
+        case httpFailure(Int)
+        case undecodableBody
         case unhandledType(String)
 
         var errorDescription: String? {
             switch self {
             case .missingAsset:
                 return "The job has no stored asset to process."
+            case .missingSourceURL:
+                return "The job's asset has no source URL to fetch."
+            case .unsupportedURL(let value):
+                return "Only http and https URLs can be fetched: \(value)"
+            case .httpFailure(let statusCode):
+                return "The server responded with status \(statusCode)."
+            case .undecodableBody:
+                return "The page body could not be decoded as text."
             case .unhandledType(let type):
                 return "No handler for job type \(type)."
             }
@@ -185,7 +255,7 @@ final class JobRunner {
             guard let row = try Row.fetchOne(
                 db,
                 sql: """
-                SELECT j.id, j.type, j.attempts, j.max_attempts, j.fragment_id, j.asset_id, a.local_path
+                SELECT j.id, j.type, j.attempts, j.max_attempts, j.fragment_id, j.asset_id, a.local_path, a.source_url
                 FROM jobs j
                 LEFT JOIN assets a ON a.id = j.asset_id
                 WHERE j.status = 'pending' AND j.available_at <= :now
@@ -205,7 +275,8 @@ final class JobRunner {
                 maxAttempts: row["max_attempts"],
                 fragmentID: (row["fragment_id"] as String?).flatMap(UUID.init(uuidString:)),
                 assetID: (row["asset_id"] as String?).flatMap(UUID.init(uuidString:)),
-                assetPath: row["local_path"]
+                assetPath: row["local_path"],
+                sourceURL: row["source_url"]
             )
 
             try db.execute(
@@ -243,13 +314,13 @@ final class JobRunner {
         }
     }
 
-    private func insertExtraction(kind: String, text: String, job: ClaimedJob) throws {
+    private func insertExtraction(kind: String, text: String, metadataJSON: String = "{}", job: ClaimedJob) throws {
         guard let fragmentID = job.fragmentID else { return }
         try database.write { db in
             try db.execute(
                 sql: """
                 INSERT INTO extractions (id, fragment_id, asset_id, kind, content_text, metadata_json, created_at)
-                VALUES (:id, :fragment_id, :asset_id, :kind, :content_text, '{}', :created_at)
+                VALUES (:id, :fragment_id, :asset_id, :kind, :content_text, :metadata_json, :created_at)
                 """,
                 arguments: [
                     "id": UUID().uuidString,
@@ -257,7 +328,22 @@ final class JobRunner {
                     "asset_id": job.assetID?.uuidString,
                     "kind": kind,
                     "content_text": text,
+                    "metadata_json": metadataJSON,
                     "created_at": DateFormatting.string(from: Date())
+                ]
+            )
+        }
+    }
+
+    private func updateFragmentTitle(_ title: String, fragmentID: FragmentID?) throws {
+        guard let fragmentID else { return }
+        try database.write { db in
+            try db.execute(
+                sql: "UPDATE fragments SET title = :title, updated_at = :now WHERE id = :id",
+                arguments: [
+                    "title": title,
+                    "now": DateFormatting.string(from: Date()),
+                    "id": fragmentID.uuidString
                 ]
             )
         }
