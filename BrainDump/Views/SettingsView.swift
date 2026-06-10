@@ -19,8 +19,9 @@ struct SettingsView: View {
             }
 
             Section("Capture") {
-                LabeledContent("Global Shortcut", value: GlobalShortcutService.shortcutDescription)
-                LabeledContent("Supported Now", value: "Text, URLs")
+                LabeledContent("Open Palette", value: GlobalShortcutService.shortcutDescription)
+                LabeledContent("Screenshot", value: ScreenshotShortcutDetector.shortcutDescription)
+                LabeledContent("Supported Now", value: "Text, URLs, Screenshots, Images")
             }
         }
         .formStyle(.grouped)

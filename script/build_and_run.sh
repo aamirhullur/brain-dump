@@ -31,7 +31,7 @@ cp "$BUILD_BINARY" "$APP_BINARY"
 chmod +x "$APP_BINARY"
 
 if [ -d "$BUILD_DIR/BrainDump_BrainDump.bundle" ]; then
-  cp -R "$BUILD_DIR/BrainDump_BrainDump.bundle" "$APP_BUNDLE/"
+  cp -R "$BUILD_DIR/BrainDump_BrainDump.bundle" "$APP_RESOURCES/"
 fi
 
 cat >"$INFO_PLIST" <<PLIST
@@ -54,6 +54,14 @@ cat >"$INFO_PLIST" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# A stable identity keeps TCC grants (Screen Recording etc.) across rebuilds;
+# ad-hoc signatures change every build and macOS silently revokes permissions.
+SIGN_IDENTITY="-"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "BrainDump Dev"; then
+  SIGN_IDENTITY="BrainDump Dev"
+fi
+codesign --force --sign "$SIGN_IDENTITY" --identifier "$BUNDLE_ID" "$APP_BUNDLE"
 
 open_app() {
   if [ "${#APP_ARGS[@]}" -gt 0 ]; then

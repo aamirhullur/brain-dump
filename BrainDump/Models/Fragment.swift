@@ -19,7 +19,16 @@ struct Fragment: Identifiable, Equatable {
             return formattedTitle(userNote)
         }
 
-        return sourceType == .url ? "Untitled URL" : "Untitled Text"
+        switch sourceType {
+        case .url:
+            return "Untitled URL"
+        case .screenshot:
+            return "Untitled Screenshot"
+        case .image:
+            return "Untitled Image"
+        case .text:
+            return "Untitled Text"
+        }
     }
 
     var previewText: String {
@@ -36,6 +45,10 @@ struct Fragment: Identifiable, Equatable {
             return "Text"
         case .url:
             return "URL"
+        case .screenshot:
+            return "Screenshot"
+        case .image:
+            return "Image"
         }
     }
 
@@ -45,6 +58,10 @@ struct Fragment: Identifiable, Equatable {
             return "text.alignleft"
         case .url:
             return "link"
+        case .screenshot:
+            return "viewfinder"
+        case .image:
+            return "photo"
         }
     }
 

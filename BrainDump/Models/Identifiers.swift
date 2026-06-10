@@ -7,6 +7,8 @@ typealias JobID = UUID
 enum SourceType: String, CaseIterable {
     case text
     case url
+    case screenshot
+    case image
 }
 
 enum FragmentStatus: String {
@@ -19,6 +21,7 @@ enum FragmentStatus: String {
 enum AssetKind: String {
     case text
     case url
+    case image
 }
 
 enum JobStatus: String {

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @main
@@ -63,11 +64,20 @@ struct BrainDumpApp: App {
         let inletController = MemoryInletController(appStore: appStore)
         memoryInletController = inletController
 
-        let shortcutService = GlobalShortcutService {
-            appStore.showMemoryInlet()
-        }
+        let shortcutService = GlobalShortcutService(
+            onShortcut: {
+                // Double-` is reserved for the future overlay feature.
+            },
+            onPaletteShortcut: {
+                appStore.showMemoryInlet()
+            },
+            onScreenshotShortcut: {
+                appStore.captureScreenshot()
+            }
+        )
         shortcutService.register()
         self.shortcutService = shortcutService
+        inletController.installDormant()
     }
 
     private static func shouldShowMemoryInletAtLaunch() -> Bool {

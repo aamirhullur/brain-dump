@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -63,6 +64,26 @@ struct ContentView: View {
                 .disabled(appStore.fragmentStore.selectedFragment == nil)
                 .help("Bookmark")
             }
+        }
+        .alert(
+            appStore.captureError?.title ?? "Capture Failed",
+            isPresented: Binding(
+                get: { appStore.captureError != nil },
+                set: { if !$0 { appStore.captureError = nil } }
+            ),
+            presenting: appStore.captureError
+        ) { failure in
+            if failure.needsScreenRecordingPermission {
+                Button("Open System Settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                        NSWorkspace.shared.open(url)
+                    }
+                    appStore.captureError = nil
+                }
+            }
+            Button("OK", role: .cancel) { appStore.captureError = nil }
+        } message: { failure in
+            Text(failure.message)
         }
         .alert("Startup Error", isPresented: Binding(
             get: { appStore.startupError != nil },
