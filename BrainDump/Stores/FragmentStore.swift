@@ -26,7 +26,8 @@ extension Fragment {
             title: row["title"],
             userNote: row["user_note"],
             status: FragmentStatus(rawValue: row["status"]) ?? .captured,
-            primaryAssetID: (row["primary_asset_id"] as String?).flatMap(UUID.init(uuidString:))
+            primaryAssetID: (row["primary_asset_id"] as String?).flatMap(UUID.init(uuidString:)),
+            bookmarkedAt: (row["bookmarked_at"] as String?).map(DateFormatting.date(from:))
         )
     }
 }
@@ -59,7 +60,7 @@ final class FragmentStore {
                 try Row.fetchAll(
                     db,
                     sql: """
-                    SELECT id, created_at, updated_at, source_type, title, user_note, status, primary_asset_id
+                    SELECT id, created_at, updated_at, source_type, title, user_note, status, primary_asset_id, bookmarked_at
                     FROM fragments
                     WHERE deleted_at IS NULL
                     ORDER BY created_at DESC
@@ -117,8 +118,8 @@ final class FragmentStore {
             try database.write { db in
                 try db.execute(
                     sql: """
-                    INSERT INTO fragments (id, created_at, updated_at, source_type, title, user_note, status, primary_asset_id, deleted_at)
-                    VALUES (:id, :now, :now, :source_type, :title, :user_note, :status, NULL, NULL)
+                    INSERT INTO fragments (id, created_at, updated_at, source_type, title, user_note, status, primary_asset_id, deleted_at, bookmarked_at)
+                    VALUES (:id, :now, :now, :source_type, :title, :user_note, :status, NULL, NULL, NULL)
                     """,
                     arguments: [
                         "id": fragmentID.uuidString,
@@ -192,8 +193,8 @@ final class FragmentStore {
             try database.write { db in
                 try db.execute(
                     sql: """
-                    INSERT INTO fragments (id, created_at, updated_at, source_type, title, user_note, status, primary_asset_id, deleted_at)
-                    VALUES (:id, :now, :now, :source_type, :title, NULL, :status, NULL, NULL)
+                    INSERT INTO fragments (id, created_at, updated_at, source_type, title, user_note, status, primary_asset_id, deleted_at, bookmarked_at)
+                    VALUES (:id, :now, :now, :source_type, :title, NULL, :status, NULL, NULL, NULL)
                     """,
                     arguments: [
                         "id": fragmentID.uuidString,
@@ -240,6 +241,68 @@ final class FragmentStore {
         selectedFragmentID = fragmentID
         onJobsEnqueued?()
         return fragmentID
+    }
+
+    func softDelete(_ fragmentID: FragmentID) {
+        do {
+            let now = Date()
+            try database.write { db in
+                try db.execute(
+                    sql: "UPDATE fragments SET deleted_at = :now, updated_at = :now WHERE id = :id AND deleted_at IS NULL",
+                    arguments: ["now": DateFormatting.string(from: now), "id": fragmentID.uuidString]
+                )
+            }
+        } catch {
+            lastError = error.localizedDescription
+            return
+        }
+        loadFragments()
+    }
+
+    func toggleBookmark(_ fragmentID: FragmentID) {
+        guard let fragment = fragments.first(where: { $0.id == fragmentID }) else { return }
+        let now = Date()
+        let bookmarkedAt: Date? = fragment.isBookmarked ? nil : now
+        do {
+            try database.write { db in
+                try db.execute(
+                    sql: "UPDATE fragments SET bookmarked_at = :bookmarked_at, updated_at = :now WHERE id = :id",
+                    arguments: [
+                        "bookmarked_at": bookmarkedAt.map(DateFormatting.string(from:)),
+                        "now": DateFormatting.string(from: now),
+                        "id": fragmentID.uuidString
+                    ]
+                )
+            }
+        } catch {
+            lastError = error.localizedDescription
+            return
+        }
+        loadFragments()
+    }
+
+    func isBookmarked(_ fragmentID: FragmentID) -> Bool {
+        fragments.first { $0.id == fragmentID }?.isBookmarked ?? false
+    }
+
+    func updateUserNote(_ note: String, for fragmentID: FragmentID) {
+        let storedNote: String? = note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : note
+        do {
+            try database.write { db in
+                try db.execute(
+                    sql: "UPDATE fragments SET user_note = :note, updated_at = :now WHERE id = :id",
+                    arguments: [
+                        "note": storedNote,
+                        "now": DateFormatting.string(from: Date()),
+                        "id": fragmentID.uuidString
+                    ]
+                )
+            }
+        } catch {
+            lastError = error.localizedDescription
+            return
+        }
+        loadFragments()
     }
 
     func primaryAssetLocalPath(for fragmentID: FragmentID) -> String? {
