@@ -4,6 +4,9 @@ import GRDB
 import Testing
 @testable import BrainDump
 
+// Vision text recognition wedges when requests run concurrently on
+// virtualized CI runners, so these tests must not interleave.
+@Suite(.serialized)
 @MainActor
 struct JobRunnerTests {
     @Test

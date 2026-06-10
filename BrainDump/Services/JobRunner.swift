@@ -62,7 +62,7 @@ final class JobRunner {
     @discardableResult
     func processAllPending() async -> Int {
         var processed = 0
-        while await processNextJob() {
+        while !Task.isCancelled, await processNextJob() {
             processed += 1
         }
         return processed
