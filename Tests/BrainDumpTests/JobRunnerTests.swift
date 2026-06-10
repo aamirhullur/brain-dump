@@ -201,6 +201,28 @@ struct JobRunnerTests {
         #expect(extractions == 0)
     }
 
+    @Test
+    func processingCountTracksHandledJobs() async throws {
+        let env = try TestEnvironment()
+        defer { env.tearDown() }
+
+        env.store.loadFragments()
+        #expect(env.store.processingCount == 0)
+
+        try env.store.capture(rawInput: "https://example.com/page")
+        #expect(env.store.processingCount == 1)
+
+        try env.store.captureImage(Self.textImagePNG("COUNT"), sourceType: .image)
+        #expect(env.store.processingCount == 3)
+
+        let runner = JobRunner(database: env.database, thumbnailsURL: env.thumbnailsURL)
+        runner.pageFetcher = { _ in "<title>Counted</title>" }
+        await runner.processAllPending()
+
+        env.store.loadFragments()
+        #expect(env.store.processingCount == 0)
+    }
+
     private static func textImagePNG(_ text: String) -> Data {
         let size = NSSize(width: 400, height: 120)
         let image = NSImage(size: size)

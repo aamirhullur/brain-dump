@@ -14,13 +14,16 @@ struct MemoryInletView: View {
 
     @State private var inputText = ""
     @State private var feedback = "Ready"
-    @State private var processingCount = 0
     @State private var lastSavedTitle: String?
     @State private var errorMessage: String?
     @State private var isHovering = false
     @State private var clipboardText: String?
     @State private var savedConfirmation: String?
     @FocusState private var isInputFocused: Bool
+
+    private var processingCount: Int {
+        fragmentStore.processingCount
+    }
 
     private let progressSize = CGSize(width: 360, height: 118)
     private let awakeSize = CGSize(width: 520, height: 118)
@@ -56,6 +59,11 @@ struct MemoryInletView: View {
                 detectClipboard()
                 updatePreferredSize()
                 focusIfNeeded()
+            }
+            .onChange(of: fragmentStore.processingCount) { _, newCount in
+                if newCount == 0 {
+                    feedback = "Ready for review"
+                }
             }
             .onExitCommand {
                 collapse()
@@ -359,14 +367,12 @@ struct MemoryInletView: View {
         do {
             try fragmentStore.capture(rawInput: trimmed)
             lastSavedTitle = title(for: trimmed, intent: intent)
-            processingCount += 1
             feedback = "Saved, queued for interpretation"
             savedConfirmation = "Saved"
             inputText = ""
             errorMessage = nil
             model.collapse()
             clearSavedConfirmationSoon()
-            scheduleProgressCompletion()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -398,13 +404,11 @@ struct MemoryInletView: View {
                 )
             }
             lastSavedTitle = images.first?.originalFilename ?? (images.count == 1 ? "Image" : "\(images.count) images")
-            processingCount += images.count
             feedback = "Saved, queued for interpretation"
             savedConfirmation = "Saved"
             errorMessage = nil
             model.collapse()
             clearSavedConfirmationSoon()
-            scheduleProgressCompletion()
         } catch {
             errorMessage = error.localizedDescription
             model.wake()
@@ -447,15 +451,6 @@ struct MemoryInletView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.15))
             savedConfirmation = nil
-        }
-    }
-
-    private func scheduleProgressCompletion() {
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(2.2))
-            guard processingCount > 0 else { return }
-            processingCount -= 1
-            feedback = processingCount == 0 ? "Ready for review" : feedback
         }
     }
 
