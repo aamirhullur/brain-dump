@@ -4,7 +4,7 @@ import GRDB
 @MainActor
 final class JobRunner {
     static let handledTypes = ["generate_thumbnail", "ocr_image"]
-    static let handledTypesJSON = "[\"" + handledTypes.joined(separator: "\",\"") + "\"]"
+    static let handledTypesJSON = String(data: try! JSONEncoder().encode(handledTypes), encoding: .utf8)!
 
     private let database: AppDatabase
     private let thumbnailsURL: URL
