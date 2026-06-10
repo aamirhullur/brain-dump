@@ -19,16 +19,19 @@ struct ScreenshotCaptureService {
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         process.arguments = ["-i", "-x", fileURL.path]
 
-        do {
-            try process.run()
-        } catch {
-            return .failed(error.localizedDescription)
-        }
-
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        let launchError: String? = await withCheckedContinuation { continuation in
             process.terminationHandler = { _ in
-                continuation.resume()
+                continuation.resume(returning: nil)
             }
+            do {
+                try process.run()
+            } catch {
+                process.terminationHandler = nil
+                continuation.resume(returning: error.localizedDescription)
+            }
+        }
+        if let launchError {
+            return .failed(launchError)
         }
 
         guard process.terminationStatus == 0 else {
