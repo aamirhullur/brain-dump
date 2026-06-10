@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GRDB
 import Testing
 @testable import BrainDump
 
@@ -12,7 +13,7 @@ struct ImageCaptureTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let database = try Database(path: root.appendingPathComponent("BrainDump.sqlite").path)
+        let database = try AppDatabase(path: root.appendingPathComponent("BrainDump.sqlite").path)
         try database.migrate()
         let store = FragmentStore(database: database, blobStore: BlobStore(root: root.appendingPathComponent("blobs", isDirectory: true)))
 
@@ -34,11 +35,13 @@ struct ImageCaptureTests {
             #expect(stored == pngData)
         }
 
-        let jobTypes = try database.query(
-            "SELECT type FROM jobs WHERE fragment_id = ? ORDER BY type;",
-            bind: { bindText(fragmentID.uuidString, to: $0, at: 1) },
-            map: { columnText($0, at: 0) }
-        )
+        let jobTypes = try database.read { db in
+            try String.fetchAll(
+                db,
+                sql: "SELECT type FROM jobs WHERE fragment_id = :id ORDER BY type",
+                arguments: ["id": fragmentID.uuidString]
+            )
+        }
         #expect(jobTypes == ["generate_thumbnail", "ocr_image", "prepare_fragment_card"])
     }
 
@@ -49,7 +52,7 @@ struct ImageCaptureTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let database = try Database(path: root.appendingPathComponent("BrainDump.sqlite").path)
+        let database = try AppDatabase(path: root.appendingPathComponent("BrainDump.sqlite").path)
         try database.migrate()
         let store = FragmentStore(database: database, blobStore: BlobStore(root: root.appendingPathComponent("blobs", isDirectory: true)))
 

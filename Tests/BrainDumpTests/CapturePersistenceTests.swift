@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Testing
 @testable import BrainDump
 
@@ -22,7 +23,7 @@ struct CapturePersistenceTests {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
 
-        let firstDatabase = try Database(path: storage.databaseURL.path)
+        let firstDatabase = try AppDatabase(path: storage.databaseURL.path)
         try firstDatabase.migrate()
         let firstStore = FragmentStore(database: firstDatabase, blobStore: BlobStore(root: storage.blobsURL))
         try firstStore.capture(rawInput: "A local-first native Mac memory inlet note")
@@ -32,23 +33,19 @@ struct CapturePersistenceTests {
         #expect(firstStore.fragments.map(\.sourceType).contains(.text))
         #expect(firstStore.fragments.map(\.sourceType).contains(.url))
 
-        let persistedDatabase = try Database(path: storage.databaseURL.path)
+        let persistedDatabase = try AppDatabase(path: storage.databaseURL.path)
         try persistedDatabase.migrate()
         let persistedStore = FragmentStore(database: persistedDatabase, blobStore: BlobStore(root: storage.blobsURL))
         persistedStore.loadFragments()
 
         #expect(persistedStore.fragments.count == 2)
 
-        let assetCount = try persistedDatabase.query("SELECT COUNT(*) FROM assets;") {
-            Int(columnInt64($0, at: 0))
-        }.first
-        let jobCount = try persistedDatabase.query("SELECT COUNT(*) FROM jobs;") {
-            Int(columnInt64($0, at: 0))
-        }.first
-        let sourceURLs = try persistedDatabase.query(
-            "SELECT source_url FROM assets WHERE kind = 'url';"
-        ) { statement in
-            columnOptionalText(statement, at: 0)
+        let (assetCount, jobCount, sourceURLs) = try persistedDatabase.read { db in
+            (
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM assets"),
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM jobs"),
+                try String.fetchAll(db, sql: "SELECT source_url FROM assets WHERE kind = 'url'")
+            )
         }
 
         #expect(assetCount == 2)

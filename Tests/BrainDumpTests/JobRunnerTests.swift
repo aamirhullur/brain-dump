@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GRDB
 import Testing
 @testable import BrainDump
 
@@ -29,9 +30,9 @@ struct JobRunnerTests {
         env.store.loadFragments()
         #expect(env.store.fragments.first?.status == .ready)
 
-        let unhandled = try env.database.query(
-            "SELECT COUNT(*) FROM jobs WHERE status = 'pending';"
-        ) { Int(columnInt64($0, at: 0)) }.first
+        let unhandled = try env.database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM jobs WHERE status = 'pending'")
+        }
         #expect(unhandled == 1)
     }
 
@@ -46,14 +47,16 @@ struct JobRunnerTests {
         if let assetPath {
             try FileManager.default.removeItem(atPath: assetPath)
         }
-        try env.database.execute("UPDATE jobs SET max_attempts = 1;")
+        try env.database.write { db in
+            try db.execute(sql: "UPDATE jobs SET max_attempts = 1")
+        }
 
         let runner = JobRunner(database: env.database, thumbnailsURL: env.thumbnailsURL)
         await runner.processAllPending()
 
-        let failed = try env.database.query(
-            "SELECT COUNT(*) FROM jobs WHERE status = 'failed' AND last_error IS NOT NULL;"
-        ) { Int(columnInt64($0, at: 0)) }.first
+        let failed = try env.database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM jobs WHERE status = 'failed' AND last_error IS NOT NULL")
+        }
         #expect(failed == 2)
 
         env.store.loadFragments()
@@ -73,14 +76,14 @@ struct JobRunnerTests {
         let runner = JobRunner(database: env.database, thumbnailsURL: env.thumbnailsURL)
         await runner.processAllPending()
 
-        let rows = try env.database.query(
-            "SELECT status, attempts, available_at FROM jobs WHERE type IN ('generate_thumbnail', 'ocr_image');"
-        ) { (columnText($0, at: 0), Int(columnInt64($0, at: 1)), columnText($0, at: 2)) }
+        let rows = try env.database.read { db in
+            try Row.fetchAll(db, sql: "SELECT status, attempts, available_at FROM jobs WHERE type IN ('generate_thumbnail', 'ocr_image')")
+        }
         #expect(rows.count == 2)
         for row in rows {
-            #expect(row.0 == "pending")
-            #expect(row.1 == 1)
-            #expect(DateFormatting.date(from: row.2) > Date())
+            #expect(row["status"] == "pending")
+            #expect(row["attempts"] == 1)
+            #expect(DateFormatting.date(from: row["available_at"]) > Date())
         }
     }
 
@@ -97,16 +100,16 @@ struct JobRunnerTests {
         try env.store.captureImage(Self.textImagePNG("KICK"), sourceType: .image)
 
         for _ in 0..<100 {
-            let remaining = try env.database.query(
-                "SELECT COUNT(*) FROM jobs WHERE type IN ('generate_thumbnail', 'ocr_image') AND status != 'succeeded';"
-            ) { Int(columnInt64($0, at: 0)) }.first ?? 0
+            let remaining = try env.database.read { db in
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM jobs WHERE type IN ('generate_thumbnail', 'ocr_image') AND status != 'succeeded'")
+            } ?? 0
             if remaining == 0 { break }
             try await Task.sleep(for: .milliseconds(100))
         }
 
-        let succeeded = try env.database.query(
-            "SELECT COUNT(*) FROM jobs WHERE status = 'succeeded';"
-        ) { Int(columnInt64($0, at: 0)) }.first
+        let succeeded = try env.database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM jobs WHERE status = 'succeeded'")
+        }
         #expect(succeeded == 2)
     }
 
@@ -116,15 +119,17 @@ struct JobRunnerTests {
         defer { env.tearDown() }
 
         try env.store.captureImage(Self.textImagePNG("X"), sourceType: .image)
-        try env.database.execute("UPDATE jobs SET status = 'running';")
+        try env.database.write { db in
+            try db.execute(sql: "UPDATE jobs SET status = 'running'")
+        }
 
         let runner = JobRunner(database: env.database, thumbnailsURL: env.thumbnailsURL)
         runner.start()
         runner.stop()
 
-        let running = try env.database.query(
-            "SELECT COUNT(*) FROM jobs WHERE status = 'running';"
-        ) { Int(columnInt64($0, at: 0)) }.first
+        let running = try env.database.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM jobs WHERE status = 'running'")
+        }
         #expect(running == 0)
     }
 
@@ -148,7 +153,7 @@ struct JobRunnerTests {
 @MainActor
 private struct TestEnvironment {
     let root: URL
-    let database: Database
+    let database: AppDatabase
     let store: FragmentStore
     let thumbnailsURL: URL
 
@@ -157,7 +162,7 @@ private struct TestEnvironment {
             .appendingPathComponent("BrainDumpJobTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         thumbnailsURL = root.appendingPathComponent("thumbnails", isDirectory: true)
-        database = try Database(path: root.appendingPathComponent("BrainDump.sqlite").path)
+        database = try AppDatabase(path: root.appendingPathComponent("BrainDump.sqlite").path)
         try database.migrate()
         store = FragmentStore(database: database, blobStore: BlobStore(root: root.appendingPathComponent("blobs", isDirectory: true)))
         store.thumbnailsRoot = thumbnailsURL

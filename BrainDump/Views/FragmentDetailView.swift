@@ -75,7 +75,7 @@ private struct EvidenceBlock: View {
     var body: some View {
         InspectorSection("Original evidence") {
             if isImageFragment {
-                if let assetPath, let image = NSImage(contentsOfFile: assetPath) {
+                if let assetPath, let image = ImageCache.image(at: URL(fileURLWithPath: assetPath)) {
                     Image(nsImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
