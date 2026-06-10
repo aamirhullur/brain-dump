@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 struct EvidenceTimelineView: View {
@@ -51,6 +52,21 @@ struct EvidenceTimelineView: View {
         .clipShape(TopLeadingRoundedRectangle(radius: 18))
         .onAppear {
             fragmentStore.loadFragments()
+        }
+        .onDrop(of: [.fileURL, .image, .png, .tiff], isTargeted: nil) { providers in
+            Task { @MainActor in
+                let images = await ImageIngest.images(from: providers)
+                for image in images {
+                    try? fragmentStore.captureImage(
+                        image.data,
+                        sourceType: .image,
+                        originalFilename: image.originalFilename,
+                        mimeType: image.mimeType,
+                        fileExtension: image.fileExtension
+                    )
+                }
+            }
+            return true
         }
     }
 }

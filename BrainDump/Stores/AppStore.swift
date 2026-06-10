@@ -39,6 +39,50 @@ final class AppStore {
         }
     }
 
+    private(set) var isCapturingScreenshot = false
+    var captureError: CaptureFailure?
+
+    struct CaptureFailure: Identifiable {
+        let id = UUID()
+        let title: String
+        let message: String
+        let needsScreenRecordingPermission: Bool
+    }
+
+    func captureScreenshot() {
+        guard !isCapturingScreenshot else { return }
+        isCapturingScreenshot = true
+        Task { @MainActor in
+            defer { isCapturingScreenshot = false }
+            let result = await ScreenshotCaptureService().captureInteractiveRegion()
+            switch result {
+            case .captured(let data):
+                do {
+                    try fragmentStore.captureImage(data, sourceType: .screenshot)
+                } catch {
+                    captureError = CaptureFailure(
+                        title: "Screenshot Not Saved",
+                        message: "The screenshot was captured but could not be stored: \(error.localizedDescription)",
+                        needsScreenRecordingPermission: false
+                    )
+                }
+            case .cancelled:
+                break
+            case .failed(let message):
+                // screencapture exits 1 when Screen Recording permission is
+                // missing or stale (e.g. revoked by a rebuild's new signature).
+                let isPermissionFailure = message.contains("status 1")
+                captureError = CaptureFailure(
+                    title: "Screenshot Failed",
+                    message: isPermissionFailure
+                        ? "macOS blocked the capture. Enable Brain Dump under System Settings → Privacy & Security → Screen & System Audio Recording. If it is already enabled, toggle it off and on; the permission goes stale when the app is rebuilt."
+                        : message,
+                    needsScreenRecordingPermission: isPermissionFailure
+                )
+            }
+        }
+    }
+
     func showMemoryInlet() {
         isMemoryInletPresented = true
         memoryInletRequestCount += 1

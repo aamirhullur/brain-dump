@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct FragmentDetailView: View {
@@ -9,7 +10,10 @@ struct FragmentDetailView: View {
             VStack(alignment: .leading, spacing: 26) {
                 DetailHeader(fragment: fragment)
 
-                EvidenceBlock(fragment: fragment)
+                EvidenceBlock(
+                    fragment: fragment,
+                    assetPath: fragmentStore.primaryAssetLocalPath(for: fragment.id)
+                )
 
                 InterpretationBlock(jobCount: fragmentStore.jobCount(for: fragment.id))
 
@@ -55,16 +59,43 @@ private struct DetailHeader: View {
 
 private struct EvidenceBlock: View {
     let fragment: Fragment
+    let assetPath: String?
+
+    private var isImageFragment: Bool {
+        fragment.sourceType == .screenshot || fragment.sourceType == .image
+    }
 
     var body: some View {
         InspectorSection("Original evidence") {
-            Text(fragment.userNote ?? "")
-                .font(.body)
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
-                .background(DesignTokens.contentSurface, in: RoundedRectangle(cornerRadius: 10))
+            if isImageFragment {
+                if let assetPath, let image = NSImage(contentsOfFile: assetPath) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxHeight: 420)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(.quaternary)
+                        }
+                } else {
+                    Label("Image evidence is missing from local storage.", systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                        .background(DesignTokens.contentSurface, in: RoundedRectangle(cornerRadius: 10))
+                }
+            } else {
+                Text(fragment.userNote ?? "")
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(DesignTokens.contentSurface, in: RoundedRectangle(cornerRadius: 10))
+            }
         }
     }
 }

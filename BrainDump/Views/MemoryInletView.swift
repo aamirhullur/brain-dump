@@ -1,12 +1,16 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 struct MemoryInletView: View {
     let model: MemoryInletModel
     let fragmentStore: FragmentStore
+    var collapsedSize = CGSize(width: 184, height: 36)
+    var isNotchBacked = false
     let onClose: () -> Void
     let onPreferredSizeChange: (CGSize) -> Void
+    var onScreenshotCapture: () -> Void = {}
 
     @State private var inputText = ""
     @State private var feedback = "Ready"
@@ -18,7 +22,6 @@ struct MemoryInletView: View {
     @State private var savedConfirmation: String?
     @FocusState private var isInputFocused: Bool
 
-    private let collapsedSize = CGSize(width: 184, height: 36)
     private let progressSize = CGSize(width: 360, height: 118)
     private let awakeSize = CGSize(width: 520, height: 118)
     private let captureSize = CGSize(width: 560, height: 154)
@@ -27,13 +30,19 @@ struct MemoryInletView: View {
         inletBody
             .frame(width: preferredSize.width, height: preferredSize.height)
             .background {
-                MemoryInletShape()
+                MemoryInletShape(topRadius: isFlushWithNotch ? 0 : 6)
                     .fill(.black)
-                    .shadow(color: .black.opacity(model.state == .dormant ? 0.25 : 0.42), radius: model.state == .dormant ? 5 : 14, y: 8)
+                    .shadow(
+                        color: .black.opacity(isFlushWithNotch ? 0 : (model.state == .dormant ? 0.25 : 0.42)),
+                        radius: model.state == .dormant ? 5 : 14,
+                        y: 8
+                    )
             }
             .overlay {
-                MemoryInletShape()
-                    .stroke(.white.opacity(0.08), lineWidth: 1)
+                if !isFlushWithNotch {
+                    MemoryInletShape()
+                        .stroke(.white.opacity(0.08), lineWidth: 1)
+                }
             }
             .preferredColorScheme(.dark)
             .animation(.interactiveSpring(response: 0.36, dampingFraction: 0.86), value: model.state)
@@ -64,9 +73,15 @@ struct MemoryInletView: View {
                     model.wake()
                 }
             }
-            .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: nil) { providers in
-                rejectUnsupportedDrop()
-                return false
+            .onDrop(of: [.fileURL, .image, .png, .tiff], isTargeted: Binding(
+                get: { false },
+                set: { targeted in
+                    if targeted, model.state == .dormant || model.state == .progress {
+                        model.wake()
+                    }
+                }
+            )) { providers in
+                handleImageDrop(providers)
             }
     }
 
@@ -84,17 +99,33 @@ struct MemoryInletView: View {
         }
     }
 
+    private var isFlushWithNotch: Bool {
+        isNotchBacked && model.state == .dormant
+    }
+
+    @ViewBuilder
     private var dormantBody: some View {
-        HStack(spacing: 8) {
-            Image(systemName: dormantSystemImage)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(dormantIconColor)
-            Text(dormantTitle)
-                .font(.caption.weight(.medium))
-                .lineLimit(1)
-                .foregroundStyle(.secondary)
+        if isNotchBacked {
+            // Anything centered here would sit behind the camera housing.
+            VStack {
+                Spacer()
+                Capsule()
+                    .fill(processingCount > 0 ? Color.blue : (savedConfirmation != nil ? Color.green : Color.clear))
+                    .frame(width: 28, height: 3)
+                    .padding(.bottom, 2)
+            }
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: dormantSystemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(dormantIconColor)
+                Text(dormantTitle)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 5)
         }
-        .padding(.top, 5)
     }
 
     private var awakeBody: some View {
@@ -179,16 +210,19 @@ struct MemoryInletView: View {
                         .font(.title3)
                         .foregroundStyle(.blue)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Screenshot capture is not available yet.")
+                        Text("Select a screen region to capture.")
                             .font(.callout.weight(.medium))
-                        Text("Use text, paste, or URL capture until screenshot evidence is wired to storage.")
+                        Text("Or press \(ScreenshotShortcutDetector.shortcutDescription) anywhere to save instantly.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Unavailable") {}
+                    Button("Capture") {
+                        model.collapse()
+                        onScreenshotCapture()
+                    }
                     .buttonStyle(.borderedProminent)
-                    .disabled(true)
+                    .keyboardShortcut(.defaultAction)
                 }
                 .padding(12)
                 .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
@@ -306,8 +340,14 @@ struct MemoryInletView: View {
 
     private func select(_ intent: CaptureIntent) {
         errorMessage = nil
-        if intent == .paste, let clipboard = clipboardText {
-            inputText = clipboard
+        if intent == .paste {
+            if let image = ImageIngest.clipboardImage() {
+                saveImages([image], sourceType: .image)
+                return
+            }
+            if let clipboard = clipboardText {
+                inputText = clipboard
+            }
         }
         model.state = .capture(intent)
     }
@@ -332,10 +372,43 @@ struct MemoryInletView: View {
         }
     }
 
-    private func rejectUnsupportedDrop() {
-        errorMessage = "Drop capture is not available yet."
-        feedback = "Drop was not saved"
-        model.wake()
+    private func handleImageDrop(_ providers: [NSItemProvider]) -> Bool {
+        Task { @MainActor in
+            let images = await ImageIngest.images(from: providers)
+            guard !images.isEmpty else {
+                errorMessage = "Only image drops are supported right now."
+                feedback = "Drop was not saved"
+                model.wake()
+                return
+            }
+            saveImages(images, sourceType: .image)
+        }
+        return true
+    }
+
+    private func saveImages(_ images: [IngestableImage], sourceType: SourceType) {
+        do {
+            for image in images {
+                try fragmentStore.captureImage(
+                    image.data,
+                    sourceType: sourceType,
+                    originalFilename: image.originalFilename,
+                    mimeType: image.mimeType,
+                    fileExtension: image.fileExtension
+                )
+            }
+            lastSavedTitle = images.first?.originalFilename ?? (images.count == 1 ? "Image" : "\(images.count) images")
+            processingCount += images.count
+            feedback = "Saved, queued for interpretation"
+            savedConfirmation = "Saved"
+            errorMessage = nil
+            model.collapse()
+            clearSavedConfirmationSoon()
+            scheduleProgressCompletion()
+        } catch {
+            errorMessage = error.localizedDescription
+            model.wake()
+        }
     }
 
     private func collapse() {
@@ -361,6 +434,9 @@ struct MemoryInletView: View {
     }
 
     private func clipboardLabel(for value: String) -> String {
+        if ImageIngest.clipboardImage() != nil {
+            return "Image ready"
+        }
         if URLDetector.url(from: value) != nil {
             return "URL ready"
         }
@@ -404,8 +480,9 @@ private struct StatusDot: View {
 }
 
 private struct MemoryInletShape: Shape {
+    var topRadius: CGFloat = 6
+
     func path(in rect: CGRect) -> Path {
-        let topRadius: CGFloat = 6
         let bottomRadius: CGFloat = 18
         var path = Path()
 

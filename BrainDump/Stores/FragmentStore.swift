@@ -1,6 +1,20 @@
 import Foundation
 import Observation
 
+enum CaptureError: LocalizedError {
+    case emptyImageData
+    case unsupportedSourceType
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyImageData:
+            return "The image was empty."
+        case .unsupportedSourceType:
+            return "This source type cannot be captured as an image."
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class FragmentStore {
@@ -129,6 +143,101 @@ final class FragmentStore {
 
         loadFragments()
         selectedFragmentID = fragmentID
+    }
+
+    @discardableResult
+    func captureImage(
+        _ data: Data,
+        sourceType: SourceType,
+        originalFilename: String? = nil,
+        mimeType: String = "image/png",
+        fileExtension: String = "png",
+        capturedAt: Date = Date()
+    ) throws -> FragmentID {
+        guard !data.isEmpty else { throw CaptureError.emptyImageData }
+        guard sourceType == .screenshot || sourceType == .image else { throw CaptureError.unsupportedSourceType }
+
+        let fragmentID = UUID()
+        let assetID = UUID()
+        let assetRecord = try blobStore.writeAsset(data, fragmentID: fragmentID, assetID: assetID, fileExtension: fileExtension)
+        let title = originalFilename ?? defaultImageTitle(sourceType: sourceType, capturedAt: capturedAt)
+
+        try database.execute("BEGIN TRANSACTION;")
+        do {
+            try database.write(
+                """
+                INSERT INTO fragments (id, created_at, updated_at, source_type, title, user_note, status, primary_asset_id, deleted_at)
+                VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, NULL);
+                """,
+                bind: { statement in
+                    bindText(fragmentID.uuidString, to: statement, at: 1)
+                    bindText(DateFormatting.string(from: capturedAt), to: statement, at: 2)
+                    bindText(DateFormatting.string(from: capturedAt), to: statement, at: 3)
+                    bindText(sourceType.rawValue, to: statement, at: 4)
+                    bindText(title, to: statement, at: 5)
+                    bindText(FragmentStatus.captured.rawValue, to: statement, at: 6)
+                }
+            )
+
+            try database.write(
+                """
+                INSERT INTO assets (id, fragment_id, kind, sha256, original_filename, mime_type, byte_size, local_path, source_url, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?);
+                """,
+                bind: { statement in
+                    bindText(assetID.uuidString, to: statement, at: 1)
+                    bindText(fragmentID.uuidString, to: statement, at: 2)
+                    bindText(AssetKind.image.rawValue, to: statement, at: 3)
+                    bindText(assetRecord.sha256, to: statement, at: 4)
+                    bindText(originalFilename ?? assetRecord.fileURL.lastPathComponent, to: statement, at: 5)
+                    bindText(mimeType, to: statement, at: 6)
+                    bindInt64(Int64(data.count), to: statement, at: 7)
+                    bindText(assetRecord.fileURL.path, to: statement, at: 8)
+                    bindText(DateFormatting.string(from: capturedAt), to: statement, at: 9)
+                }
+            )
+
+            try database.write(
+                "UPDATE fragments SET primary_asset_id = ? WHERE id = ?;",
+                bind: { statement in
+                    bindText(assetID.uuidString, to: statement, at: 1)
+                    bindText(fragmentID.uuidString, to: statement, at: 2)
+                }
+            )
+
+            try enqueueJob(type: "generate_thumbnail", fragmentID: fragmentID, assetID: assetID, now: capturedAt)
+            try enqueueJob(type: "ocr_image", fragmentID: fragmentID, assetID: assetID, now: capturedAt)
+            try enqueueJob(type: "prepare_fragment_card", fragmentID: fragmentID, assetID: assetID, now: capturedAt)
+
+            try database.execute("COMMIT;")
+        } catch {
+            try? database.execute("ROLLBACK;")
+            try? FileManager.default.removeItem(at: assetRecord.fileURL)
+            throw error
+        }
+
+        loadFragments()
+        selectedFragmentID = fragmentID
+        return fragmentID
+    }
+
+    func primaryAssetLocalPath(for fragmentID: FragmentID) -> String? {
+        let rows = try? database.query(
+            """
+            SELECT a.local_path
+            FROM fragments f
+            JOIN assets a ON a.id = f.primary_asset_id
+            WHERE f.id = ?;
+            """,
+            bind: { bindText(fragmentID.uuidString, to: $0, at: 1) },
+            map: { columnOptionalText($0, at: 0) }
+        )
+        return rows?.first ?? nil
+    }
+
+    private func defaultImageTitle(sourceType: SourceType, capturedAt: Date) -> String {
+        let stamp = capturedAt.formatted(date: .abbreviated, time: .shortened)
+        return sourceType == .screenshot ? "Screenshot \(stamp)" : "Image \(stamp)"
     }
 
     func jobCount(for fragmentID: FragmentID) -> Int {

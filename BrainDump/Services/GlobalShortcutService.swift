@@ -1,36 +1,40 @@
 import AppKit
+import Carbon.HIToolbox
 
 @MainActor
 final class GlobalShortcutService {
-    static let shortcutDescription = "Press ` twice"
+    static let shortcutDescription = "Option + ` (or hover over the notch)"
 
     private var localMonitor: Any?
-    private var eventTap: CFMachPort?
-    private var eventTapRunLoopSource: CFRunLoopSource?
-    private var eventTapContext: GlobalShortcutEventTapContext?
+    private let hotKeys = HotKeyService()
     private let detector: GraveShortcutDetector
     private let onShortcut: () -> Void
+    private let onPaletteShortcut: () -> Void
+    private let onScreenshotShortcut: () -> Void
 
-    init(doublePressInterval: TimeInterval = 0.45, onShortcut: @escaping () -> Void) {
+    init(
+        doublePressInterval: TimeInterval = 0.45,
+        onShortcut: @escaping () -> Void,
+        onPaletteShortcut: @escaping () -> Void = {},
+        onScreenshotShortcut: @escaping () -> Void = {}
+    ) {
         detector = GraveShortcutDetector(doublePressInterval: doublePressInterval)
         self.onShortcut = onShortcut
+        self.onPaletteShortcut = onPaletteShortcut
+        self.onScreenshotShortcut = onScreenshotShortcut
     }
 
     deinit {
         if let localMonitor {
             NSEvent.removeMonitor(localMonitor)
         }
-        if let eventTapRunLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), eventTapRunLoopSource, .commonModes)
-        }
-        if let eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
-        }
     }
 
     func register() {
-        guard localMonitor == nil, eventTap == nil else { return }
+        guard localMonitor == nil else { return }
 
+        // Double-` only works while the app is frontmost; watching it
+        // globally would need a CGEvent tap and Accessibility permission.
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if handlePotentialShortcut(keyCode: event.keyCode, modifierFlags: event.modifierFlags, timestamp: Date()) {
@@ -39,7 +43,13 @@ final class GlobalShortcutService {
             return event
         }
 
-        registerEventTap()
+        // System-wide hotkeys via Carbon; no permissions required.
+        hotKeys.register(keyCode: UInt32(kVK_ANSI_Grave), modifiers: UInt32(optionKey)) { [weak self] in
+            self?.onPaletteShortcut()
+        }
+        hotKeys.register(keyCode: UInt32(kVK_ANSI_2), modifiers: UInt32(optionKey | shiftKey)) { [weak self] in
+            self?.onScreenshotShortcut()
+        }
     }
 
     @discardableResult
@@ -50,94 +60,17 @@ final class GlobalShortcutService {
         }
         return false
     }
-
-    private func registerEventTap() {
-        let context = GlobalShortcutEventTapContext(detector: GraveShortcutDetector(doublePressInterval: detector.doublePressInterval)) { [weak self] in
-            Task { @MainActor in
-                self?.onShortcut()
-            }
-        }
-        eventTapContext = context
-
-        let pointer = UnsafeMutableRawPointer(Unmanaged.passUnretained(context).toOpaque())
-        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: globalShortcutEventTapCallback,
-            userInfo: pointer
-        ) else {
-            return
-        }
-
-        eventTap = tap
-        eventTapRunLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        if let eventTapRunLoopSource {
-            CFRunLoopAddSource(CFRunLoopGetMain(), eventTapRunLoopSource, .commonModes)
-        }
-        CGEvent.tapEnable(tap: tap, enable: true)
-    }
 }
 
-private final class GlobalShortcutEventTapContext {
-    let detector: GraveShortcutDetector
-    let onShortcut: () -> Void
-    private var pendingReplayToken = 0
-    private let replayMarker: Int64 = 0x42445250
+enum ScreenshotShortcutDetector {
+    static let shortcutDescription = "Option + Shift + 2"
+    private static let twoKeyCode: UInt16 = 19
 
-    init(detector: GraveShortcutDetector, onShortcut: @escaping () -> Void) {
-        self.detector = detector
-        self.onShortcut = onShortcut
+    static func matches(keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags) -> Bool {
+        guard keyCode == twoKeyCode else { return false }
+        let relevant = modifierFlags.intersection([.command, .control, .option, .shift])
+        return relevant == [.option, .shift]
     }
-
-    func handle(event: CGEvent) -> Unmanaged<CGEvent>? {
-        if event.getIntegerValueField(.eventSourceUserData) == replayMarker {
-            return Unmanaged.passUnretained(event)
-        }
-
-        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        let modifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
-        guard detector.isPotentialShortcut(keyCode: keyCode, modifierFlags: modifierFlags) else {
-            cancelPendingReplay()
-            return Unmanaged.passUnretained(event)
-        }
-
-        if detector.handlePotentialShortcut(keyCode: keyCode, modifierFlags: modifierFlags, timestamp: Date()) {
-            cancelPendingReplay()
-            onShortcut()
-            return nil
-        }
-
-        scheduleReplay(of: event)
-        return nil
-    }
-
-    private func scheduleReplay(of event: CGEvent) {
-        pendingReplayToken += 1
-        let token = pendingReplayToken
-        guard let eventToReplay = event.copy() else { return }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + detector.doublePressInterval) { [weak self] in
-            guard let self, token == pendingReplayToken else { return }
-            eventToReplay.setIntegerValueField(.eventSourceUserData, value: replayMarker)
-            eventToReplay.post(tap: .cghidEventTap)
-        }
-    }
-
-    private func cancelPendingReplay() {
-        pendingReplayToken += 1
-    }
-}
-
-private let globalShortcutEventTapCallback: CGEventTapCallBack = { _, type, event, userData in
-    guard type == .keyDown, let userData else {
-        return Unmanaged.passUnretained(event)
-    }
-
-    let context = Unmanaged<GlobalShortcutEventTapContext>.fromOpaque(userData).takeUnretainedValue()
-    return context.handle(event: event)
 }
 
 final class GraveShortcutDetector {
