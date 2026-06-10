@@ -10,6 +10,7 @@ jobs:
   macos:
     name: macOS Build and Test
     runs-on: macos-15
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
@@ -34,4 +35,5 @@ jobs:
         run: swift build
 
       - name: Test
+        timeout-minutes: 8
         run: swift test
