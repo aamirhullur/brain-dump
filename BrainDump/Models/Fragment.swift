@@ -7,8 +7,14 @@ struct Fragment: Identifiable, Equatable {
     let sourceType: SourceType
     let title: String?
     let userNote: String?
+    let annotation: String?
     let status: FragmentStatus
     let primaryAssetID: AssetID?
+    let bookmarkedAt: Date?
+
+    var isBookmarked: Bool {
+        bookmarkedAt != nil
+    }
 
     var displayTitle: String {
         if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

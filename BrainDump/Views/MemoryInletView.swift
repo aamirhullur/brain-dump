@@ -7,7 +7,6 @@ struct MemoryInletView: View {
     let model: MemoryInletModel
     let fragmentStore: FragmentStore
     var collapsedSize = CGSize(width: 184, height: 36)
-    var isNotchBacked = false
     let onClose: () -> Void
     let onPreferredSizeChange: (CGSize) -> Void
     var onScreenshotCapture: () -> Void = {}
@@ -108,31 +107,18 @@ struct MemoryInletView: View {
     }
 
     private var isFlushWithNotch: Bool {
-        isNotchBacked && model.state == .dormant
+        model.state == .dormant
     }
 
-    @ViewBuilder
     private var dormantBody: some View {
-        if isNotchBacked {
-            // Anything centered here would sit behind the camera housing.
-            VStack {
-                Spacer()
-                Capsule()
-                    .fill(processingCount > 0 ? Color.blue : (savedConfirmation != nil ? Color.green : Color.clear))
-                    .frame(width: 28, height: 3)
-                    .padding(.bottom, 2)
-            }
-        } else {
-            HStack(spacing: 8) {
-                Image(systemName: dormantSystemImage)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(dormantIconColor)
-                Text(dormantTitle)
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.top, 5)
+        // Anything centered here would sit behind the camera housing on
+        // notch displays; non-notch displays render the same faux notch.
+        VStack {
+            Spacer()
+            Capsule()
+                .fill(processingCount > 0 ? Color.blue : (savedConfirmation != nil ? Color.green : Color.clear))
+                .frame(width: 28, height: 3)
+                .padding(.bottom, 2)
         }
     }
 
@@ -323,27 +309,6 @@ struct MemoryInletView: View {
         case .progress:
             return progressSize
         }
-    }
-
-    private var dormantSystemImage: String {
-        if savedConfirmation != nil {
-            return "checkmark.circle.fill"
-        }
-        return processingCount > 0 ? "circle.dotted" : "brain.head.profile"
-    }
-
-    private var dormantIconColor: Color {
-        if savedConfirmation != nil {
-            return .green
-        }
-        return processingCount > 0 ? .blue : .secondary
-    }
-
-    private var dormantTitle: String {
-        if let savedConfirmation {
-            return savedConfirmation
-        }
-        return processingCount > 0 ? "\(processingCount) processing" : "Brain Dump"
     }
 
     private func select(_ intent: CaptureIntent) {
