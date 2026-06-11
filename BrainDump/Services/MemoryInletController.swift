@@ -16,7 +16,7 @@ enum NotchMetrics {
             )
         }
         let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
-        return CGSize(width: 184, height: max(24, min(menuBarHeight, 38)))
+        return CGSize(width: 184, height: max(24, menuBarHeight))
     }
 
     static func hasNotch(_ screen: NSScreen?) -> Bool {
@@ -115,7 +115,6 @@ final class MemoryInletController {
             model: model,
             fragmentStore: appStore.fragmentStore,
             collapsedSize: NotchMetrics.dormantSize(for: screen),
-            isNotchBacked: NotchMetrics.hasNotch(screen),
             onClose: { [weak self] in self?.hide() },
             onPreferredSizeChange: { [weak self] size in
                 self?.resize(to: size)
