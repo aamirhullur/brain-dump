@@ -110,6 +110,9 @@ struct EvidenceTimelineView: View {
         .onChange(of: section) {
             ensureSelectionIsVisible()
         }
+        .onChange(of: fragmentStore.fragments) {
+            ensureSelectionIsVisible()
+        }
         .onDrop(of: [.fileURL, .image, .png, .tiff], isTargeted: nil) { providers in
             Task { @MainActor in
                 let images = await ImageIngest.images(from: providers)
